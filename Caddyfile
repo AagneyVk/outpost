@@ -1,0 +1,9 @@
+{$OUTPOST_HOST} {
+    basic_auth {
+        visitor {$OUTPOST_ACCESS_HASH}
+    }
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:3001 {
+        header_up -Authorization
+    }
+}

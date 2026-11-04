@@ -1,0 +1,6 @@
+{
+  "project": "copy/v86",
+  "commit": "315b2b0b758703ef0e6cc7b4088d6068f83f3c20",
+  "checked": "2026-11-02",
+  "assets": "See vendor-manifest.json; built public assets are content-hashed separately, not claimed to match this source commit."
+}

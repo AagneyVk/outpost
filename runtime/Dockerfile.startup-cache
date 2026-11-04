@@ -1,0 +1,5 @@
+FROM outpost-debian32-cache-base
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb dbus && rm -rf /var/lib/apt/lists/*
+COPY prepare-startup-cache.sh /usr/local/bin/prepare-startup-cache
+USER 1000:1000
+ENTRYPOINT ["/bin/sh","/usr/local/bin/prepare-startup-cache"]

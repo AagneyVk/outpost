@@ -1,0 +1,15 @@
+#!/bin/sh
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /run /tmp /var/run
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+hostname outpost
+mdev -s
+modprobe psmouse 2>/dev/null || true
+modprobe virtio_net 2>/dev/null || true
+ip link set lo up
+export HOME=/root TERM=xterm PS1='outpost:~# '
+echo '__OUTPOST_READY__'
+while :; do setsid sh -c 'exec sh -i </dev/ttyS0 >/dev/ttyS0 2>&1'; done

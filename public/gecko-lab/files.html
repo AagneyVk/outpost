@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OUTPOST Files</title>
+<link rel="stylesheet" href="/workstation.css">
+<link rel="stylesheet" href="/tools.css">
+<body class="tools-page outpost-theme">
+<header><strong>OUTPOST</strong><span id="status" role="status">Loading files…</span><nav><a href="/" data-return-browser>Back to browser</a></nav></header>
+<main><section id="welcome"><div class="tool-card">
+  <h1>Files</h1>
+  <p>Upload a file, then click its name to download it. These files stay in this browser. The Linux terminal has a separate Files panel.</p>
+  <label for="upload">Add a file</label>
+  <input id="upload" type="file">
+  <p id="empty-files" class="tool-empty" hidden>No files yet. Add a file to get started.</p>
+  <div id="file-list"></div>
+</div></section></main>
+<script type="module" src="./files.mjs"></script>
+<script type="module" src="./return-to-browser.mjs"></script>
+</html>

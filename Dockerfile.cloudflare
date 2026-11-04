@@ -1,0 +1,12 @@
+FROM node:24-bookworm-slim
+WORKDIR /app
+COPY server.mjs relay.mjs ./
+COPY node_modules/ws ./node_modules/ws
+COPY node_modules/ipaddr.js ./node_modules/ipaddr.js
+COPY public/gecko-lab ./public/gecko-lab
+COPY public/theme ./public/theme
+COPY public/workstation.css public/tools.css public/portable.js ./public/
+ENV OUTPOST_BIND=0.0.0.0 OUTPOST_PUBLIC_PREVIEW=1
+USER node
+EXPOSE 3001
+CMD ["node", "server.mjs"]

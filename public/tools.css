@@ -1,0 +1,110 @@
+.tools-page header { position: sticky; top: 0; z-index: 1; }
+.tools-page nav a { align-self: center; color: #1556b1; text-decoration: none; }
+.tools-page nav a:hover { text-decoration: underline; }
+.tools-page #welcome { margin: clamp(16px, 7vh, 80px) auto; }
+.tool-card { background: #fff; border: 1px solid #dce1ea; border-radius: 12px; padding: 24px; }
+.tool-card h1 { margin-top: 0; }
+.tool-card input[type=file] { display: block; margin: 8px 0 16px; max-width: 100%; }
+.tool-card input::file-selector-button {
+  font: inherit; color: #fff; background: #1668e8; border: 0; border-radius: 5px;
+  padding: 8px 12px; margin-right: 8px; cursor: pointer;
+}
+.tool-card .file-row { padding: 10px 12px; text-align: left; overflow-wrap: anywhere; }
+.tool-card .file-row:hover { background: #f0f5ff; }
+.tool-empty { padding: 14px; border: 1px dashed #c6ceda; border-radius: 8px; }
+.tools-page #desktop { min-height: calc(100dvh - 48px); }
+.tools-page #screen.serial-screen {
+  width: 100%; margin: 0; padding: 16px;
+  background: #10141e; color: #cfd9ee; overflow: auto;
+}
+.outpost-theme { background: #111111; color: #f1f1f1; color-scheme: dark; }
+.outpost-theme header, .outpost-theme #desktop, .outpost-theme #loading { background: #111111; }
+.outpost-theme header { border-color: #30353b; }
+.outpost-theme #status, .outpost-theme p, .outpost-theme details { color: #bdbdbd; }
+.outpost-theme nav a { color: #f4f4f4; }
+.outpost-theme button, .outpost-theme .import, .outpost-theme input, .outpost-theme select {
+  border-radius: 0; background: #222222; color: #f1f1f1; border-color: #555555;
+}
+.outpost-theme button:hover, .outpost-theme .import:hover { background: #333333; }
+.outpost-theme .primary { background: #f4f4f4; color: #111111; border-color: #f4f4f4; }
+.outpost-theme .primary:hover { background: #d9d9d9; }
+.outpost-theme :focus-visible { outline: 2px solid #f4f4f4; outline-offset: 3px; }
+.outpost-theme .mark { border-radius: 0; background: #f4f4f4; color: #111111; font-family: monospace; }
+.outpost-theme dialog, .outpost-theme .boot-card {
+  background: #191919; color: #f1f1f1; border: 1px solid #555555; border-radius: 0;
+}
+.outpost-theme .boot-card {
+  width: min(460px, calc(100vw - 32px)); margin: 24px auto; padding: 24px;
+  box-shadow: 5px 5px #08090a;
+}
+.outpost-theme .boot-meta {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px;
+  border-top: 1px solid #555555; padding-top: 12px;
+  font: 13px monospace; color: #f4f4f4;
+}
+.outpost-theme .pixel-signal { display: block; width: 8px; height: 8px; background: #f4f4f4; box-shadow: 12px 0 #a0a0a0, 24px 0 #555555; }
+.outpost-theme #message { color: #ffadad; }
+.outpost-theme footer#status { background: #111; border-color: #333; }
+.outpost-theme #address { border-radius: 0; background: #222; }
+.outpost-theme .tool-card, .outpost-theme .tool-empty { background: #191919; border-color: #555; border-radius: 0; }
+.outpost-theme .tool-card .file-row:hover { background: #333; }
+.outpost-theme .tool-card input::file-selector-button { background: #f4f4f4; color: #111; border-radius: 0; }
+.outpost-theme #screen.serial-screen { background: #111; color: #eee; }
+.outpost-theme #welcome > .mark { background-color: #f4f4f4; }
+.outpost-theme a { color: #eee; }
+.outpost-theme {
+  min-height: 100vh;
+  font: 15px 'Segoe UI', system-ui, sans-serif;
+}
+.outpost-theme header strong {
+  display: inline-flex; align-items: center; gap: 10px;
+  font: 16px 'OUTPOST Pixel', monospace; letter-spacing: 1px;
+}
+.outpost-theme header strong::before {
+  content: ''; width: 14px; height: 14px;
+  background: conic-gradient(#fff 25%, transparent 0 50%, #fff 0 75%, transparent 0) 0 0 / 8px 8px;
+}
+.outpost-theme h1, .outpost-theme h2 {
+  font-family: 'OUTPOST Pixel', monospace; letter-spacing: 0; line-height: 1.1;
+}
+.outpost-theme #status, .outpost-theme .small { font-size: 14px; }
+.outpost-theme button, .outpost-theme .import, .outpost-theme input, .outpost-theme select {
+  font: inherit; border: 2px solid #777;
+}
+.outpost-theme button, .outpost-theme .import, .outpost-theme .mark {
+  clip-path: var(--pixel-cut);
+  box-shadow: inset 0 -3px #080808;
+}
+.outpost-theme button:focus-visible, .outpost-theme .import:focus-within {
+  outline: 0; box-shadow: inset 0 0 0 2px #fff;
+}
+.outpost-theme .primary:focus-visible { box-shadow: inset 0 0 0 2px #111; }
+.outpost-theme .primary { border-color: #fff; box-shadow: inset 0 -3px #aaa; }
+.outpost-theme .boot-card, .outpost-theme .tool-card, .outpost-theme dialog {
+  border: 2px solid #999;
+  clip-path: var(--pixel-cut);
+  box-shadow: inset 0 0 0 2px #080808;
+}
+.outpost-theme .mark { font-family: 'OUTPOST Pixel', monospace; }
+.outpost-theme .boot-meta { font: 15px 'OUTPOST Pixel', monospace; }
+@media (max-width: 720px) {
+  .tools-page header { height: auto; padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+  .tools-page nav { flex-wrap: wrap; margin-left: 0; }
+  .tools-page #welcome { padding: 16px; }
+}
+.outpost-theme {
+  --pixel-cut: polygon(4px 0, calc(100% - 4px) 0, calc(100% - 4px) 4px,
+    100% 4px, 100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px),
+    calc(100% - 4px) 100%, 4px 100%, 4px calc(100% - 4px), 0 calc(100% - 4px), 0 4px, 4px 4px);
+}
+@font-face {
+  font-family: 'OUTPOST Pixel';
+  src: url('/theme/pixelify.ttf') format('truetype');
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'OUTPOST Terminal';
+  src: url('/theme/vt323.ttf') format('truetype');
+  font-display: swap;
+}

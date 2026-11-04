@@ -1,0 +1,20 @@
+#!/bin/sh
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /run /tmp
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || true
+hostname outpost
+busybox mdev -s
+chmod 666 /dev/null /dev/zero /dev/full /dev/random /dev/urandom /dev/tty /dev/ptmx
+mkdir -p /dev/shm
+mount -t tmpfs -o mode=1777 tmpfs /dev/shm 2>/dev/null || true
+modprobe psmouse 2>/dev/null || true
+modprobe evdev 2>/dev/null || true
+modprobe virtio_net 2>/dev/null || true
+ip link set lo up
+if ! /sbin/outpost-seed; then echo 'Fresh session randomness unavailable. Refusing workspace startup.'; while :; do sleep 3600; done; fi
+export HOME=/root TERM=xterm PS1='outpost:~# '
+echo '__OUTPOST_READY__'
+while :; do setsid sh -c 'exec sh -i </dev/ttyS0 >/dev/ttyS0 2>&1'; done

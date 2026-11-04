@@ -1,0 +1,50 @@
+body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+}
+body:has(#tab-strip:not([hidden])) { grid-template-rows: auto auto minmax(0, 1fr); }
+#tab-strip { display: flex; gap: 4px; padding: 4px 12px; background: #171717; border-bottom: 1px solid #555; }
+#tab-strip[hidden] { display: none; }
+#tabs { display: flex; gap: 4px; overflow-x: auto; min-width: 0; }
+.browser-tab { display: flex; align-items: center; flex: 0 0 auto; }
+.browser-tab button { padding: 5px 8px; }
+.browser-tab button[aria-current=true] { background: #fff; color: #111; }
+#previous-frame { position: absolute; inset: 0; width: 100%; height: 100%; }
+#address:not(:focus) { color: #b8b8b8; }
+
+header { gap: 12px; padding: 0 12px; }
+#workspace-tools[hidden] { display: none; }
+#workspace-tools a { color: inherit; padding: 5px; }
+.browser-buttons { display: flex; gap: 2px; }
+.browser-buttons button { min-width: 32px; padding: 5px 7px; }
+#history-dialog { width: min(540px, 90vw); }
+#history-list { max-height: 50vh; overflow: auto; padding-left: 24px; }
+#history-list button { width: 100%; text-align: left; overflow-wrap: anywhere; margin-bottom: 4px; }
+.history-preview { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #b8b8b8; font-size: .85em; }
+@media (max-width: 780px) {
+  header { height: auto; flex-wrap: wrap; gap: 6px; padding: 6px 10px; }
+  #navigation { order: 1; flex-basis: 100%; }
+}
+#navigation { display: flex; flex: 1; gap: 6px; min-width: 0; }
+#address {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #d7d9df;
+  border-radius: 18px;
+  padding: 6px 14px;
+  background: #f5f6f8;
+  font: inherit;
+}
+#browser { min-height: 0; overflow: auto; }
+#viewport { position: relative; width: 100%; height: 100%; background: white; overflow: hidden; }
+#surface { display: block; width: 100%; height: 100%; }
+#browser-scene {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: #111; color: #fff; padding: 16px; overflow: auto;
+}
+#browser-scene[hidden] { display: none; }
+.scene-card { width: min(100%, 440px); border: 2px solid #888; padding: 24px; text-align: center; }
+.scene-art { width: 160px; max-width: 70%; height: auto; }
+.scene-card p { overflow-wrap: anywhere; }
+#status { position: fixed; z-index: 2; bottom: 0; left: 0; max-width: 100%; padding: 6px 12px; border: 1px solid #555; background: white; pointer-events: none; }

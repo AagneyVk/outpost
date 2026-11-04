@@ -1,0 +1,7 @@
+{$OUTPOST_HOST} {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:3001 {
+        header_up X-Outpost-Client-IP {remote_host}
+        header_up -Authorization
+    }
+}

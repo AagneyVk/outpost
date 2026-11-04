@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OUTPOST</title>
+<link rel="stylesheet" href="/workstation.css">
+<link rel="stylesheet" href="/gecko-lab/browser.css">
+<link rel="stylesheet" href="/tools.css"><body class="outpost-theme"><header>
+  <strong>OUTPOST</strong>
+  <div class="browser-buttons" aria-label="Page navigation">
+    <button id="back" type="button" aria-label="Back" title="Back" disabled>←</button>
+    <button id="forward" type="button" aria-label="Forward" title="Forward" disabled>→</button>
+    <button id="reload" type="button" aria-label="Reload" title="Reload" disabled>↻</button>
+  </div>
+  <form id="navigation">
+    <input id="address" aria-label="Address" type="text" placeholder="Search Google or enter a URL" required disabled>
+    <button id="go" type="submit" disabled>Go</button>
+  </form>
+  <button id="history" type="button">History</button>
+  <div class="browser-buttons" aria-label="Page zoom">
+    <button id="zoom-out" type="button" aria-label="Zoom out" disabled>−</button>
+    <button id="zoom-reset" type="button" aria-label="Reset zoom" disabled>100%</button>
+    <button id="zoom-in" type="button" aria-label="Zoom in" disabled>+</button>
+  </div>
+  <button id="fullscreen" type="button">Full screen</button>
+  <nav id="workspace-tools" hidden>
+    <a href="/workstation.html?tool=terminal" target="outpost-linux-tools">Terminal</a>
+  </nav>
+  <a href="/gecko-lab/files.html" target="outpost-browser-files">Files</a>
+  <button id="exit-browser" type="button" disabled>Exit &amp; export</button>
+</header>
+<div id="tab-strip" hidden>
+  <div id="tabs" aria-label="Browser tabs"></div>
+  <button id="new-tab" type="button" aria-label="New tab">+</button>
+</div>
+<dialog id="history-dialog">
+  <h2>History</h2>
+  <p class="small">Saved in this profile and included in its encrypted export.</p>
+  <ol id="history-list"></ol>
+  <button id="clear-history" type="button" disabled>Clear browsing history</button>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+<main id="browser">
+  <section id="welcome">
+    <div class="mark" aria-hidden="true">O</div>
+    <h1>Browse in OUTPOST</h1>
+    <p>Gecko runs inside this tab. Start the browser, then search Google or enter a website address.</p>
+    <button id="start" class="primary" type="button">Start browser</button>
+    <p id="start-error" role="alert" hidden></p>
+    <details>
+      <summary>Network settings</summary>
+      <label for="relay-url">Custom Wisp endpoint</label>
+      <input id="relay-url" type="url" value="wss://wisp.mercurywork.shop/">
+      <p>MercuryWorkshop’s public demo relay is selected by default. Clear the field to use OUTPOST’s bundled relay.</p>
+    </details>
+    <details id="profile-options">
+      <summary>Encrypted browser profile</summary>
+      <p>New exports use exactly 8 characters with a number and a symbol. For imports, use the original passphrase. Close other running OUTPOST browser tabs first.</p>
+      <button id="resume-browser" type="button" hidden>Back to browser</button>
+      <label for="profile-passphrase">Profile passphrase</label>
+      <input id="profile-passphrase" type="password" autocomplete="off" minlength="8" maxlength="1024">
+      <button id="show-passphrase" type="button" aria-controls="profile-passphrase" aria-pressed="false">Show passphrase</button>
+      <button id="export-profile" type="button">Export encrypted profile</button>
+      <button id="export-clear-profile" type="button">Export and clear browser profiles</button>
+      <div id="confirm-profile-clear" hidden>
+        <p>Confirm that the encrypted file downloaded and you know its passphrase. Clearing removes all OUTPOST Gecko profiles from this browser on this address. Browser Files and Linux workspaces are separate.</p>
+        <button id="clear-profile" type="button">I have my export. Clear profiles</button>
+        <button id="cancel-profile-clear" type="button">Keep profiles</button>
+      </div>
+      <label for="profile-file">Encrypted profile to import</label>
+      <input id="profile-file" type="file" accept=".outpost">
+      <button id="import-profile" type="button">Import encrypted profile</button>
+    </details>
+    <p id="workspace-link" hidden><a href="/workstation.html">Open the Linux workspace</a></p>
+  </section>
+  <section id="viewport" hidden>
+    <canvas id="surface" tabindex="0" aria-label="Website view"></canvas>
+    <canvas id="previous-frame" hidden aria-hidden="true"></canvas>
+    <div id="browser-scene" hidden>
+      <div class="scene-card">
+        <svg class="scene-art" viewBox="0 0 40 28" aria-hidden="true" shape-rendering="crispEdges">
+          <path fill="#fff" d="M4 2h32v2h2v18h-2v2H4v-2H2V4h2z"/>
+          <path fill="#111" d="M5 5h30v15H5z"/>
+          <path fill="#fff" d="M9 9h2v2h2v2h-2v2H9v-2h2v-2H9zm7 4h8v2h-8zM17 24h6v2h6v2H11v-2h6z"/>
+          <path fill="#888" d="M30 7h2v2h-2zm0 4h2v2h-2zm0 4h2v2h-2z"/>
+        </svg>
+        <h2 id="scene-title"></h2>
+        <p id="scene-detail"></p>
+        <button id="scene-address" type="button" hidden>Edit address</button>
+        <button id="scene-view" type="button" hidden>Show page</button>
+      </div>
+    </div>
+  </section>
+</main>
+<footer id="status" role="status" hidden></footer>
+<script type="module" src="/gecko-lab/start.mjs"></script>
+</html>

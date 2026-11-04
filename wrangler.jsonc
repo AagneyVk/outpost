@@ -1,0 +1,19 @@
+{
+  "name": "outpost-preview",
+  "main": "cloudflare.mjs",
+  "compatibility_date": "2026-11-03",
+  "vars": {
+    "OUTPOST_ORIGIN": "https://outpost-preview.YOUR_SUBDOMAIN.workers.dev"
+  },
+  "containers": [
+    {
+      "class_name": "Outpost",
+      "image": "./Dockerfile.cloudflare",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "OUTPOST", "class_name": "Outpost" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Outpost"] }]
+}

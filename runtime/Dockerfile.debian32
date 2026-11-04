@@ -1,0 +1,20 @@
+FROM --platform=linux/386 alpine:3.22 AS kernel
+RUN --mount=type=secret,id=build_ca,target=/etc/ssl/cert.pem apk add --no-cache linux-virt mkinitfs gcc musl-dev linux-headers
+COPY seed.c /seed.c
+RUN gcc -Os -static -s /seed.c -o /outpost-seed && mkinitfs -F 'base virtio 9p' $(cat /usr/share/kernel/virt/kernel.release)
+FROM --platform=linux/386 debian:bookworm-slim AS guest
+RUN apt-get update && apt-get install -y --no-install-recommends firefox-esr chromium chromium-sandbox dbus-x11 xserver-xorg-core xserver-xorg-video-vesa xserver-xorg-input-evdev xinit openbox xterm x11-utils x11-xserver-utils fonts-liberation fonts-dejavu-core busybox kmod util-linux procps iproute2 curl wget openssh-client dnsutils ca-certificates python3 && rm -rf /var/lib/apt/lists/*
+COPY --from=kernel /boot/ /boot/
+COPY --from=kernel /lib/modules/ /lib/modules/
+RUN find /lib/modules -name '*.ko.gz' -exec gzip -d {} + && depmod -a $(ls /lib/modules)
+COPY --from=kernel /outpost-seed /sbin/outpost-seed
+COPY debian-init /sbin/outpost-init
+COPY welcome.html /home/outpost/proof.html
+COPY xorg.conf /etc/X11/xorg.conf
+RUN useradd -m -u 1000 -s /bin/bash outpost && chown -R outpost:outpost /home/outpost && chmod 755 /sbin/outpost-init
+FROM python:3.13-alpine AS pack
+COPY --from=guest / /rootfs/
+COPY fs2json.py copy-to-sha256.py /tools/
+RUN mkdir -p /out/rootfs && tar -C /rootfs -cf /rootfs.tar bin boot dev etc home lib media mnt opt proc root run sbin srv sys tmp usr var && python /tools/fs2json.py --out /out/fs.json /rootfs.tar && python /tools/copy-to-sha256.py /rootfs.tar /out/rootfs >/tmp/pack.log 2>&1
+FROM scratch
+COPY --from=pack /out/ /
