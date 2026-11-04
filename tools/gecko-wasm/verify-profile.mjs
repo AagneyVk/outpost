@@ -61,6 +61,7 @@ try {
   const initialRequests = await fixture(original);
   let page = await original.newPage();
   await page.goto(base);
+  await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
   await navigate(page, '/login', [11, 191, 117]);
   assert(initialRequests.some(request => request.seed));
   await page.getByRole('button', { name: 'New tab', exact: true }).click();
@@ -68,7 +69,8 @@ try {
   await page.getByRole('textbox', { name: 'Address' }).press('Enter');
   await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
   await page.waitForFunction(async () => {
-    const { readBrowserSession } = await import('/gecko-lab/profile.mjs');
+    const entry = document.querySelector('script[type="module"][src$="/start.mjs"]');
+    const { readBrowserSession } = await import(new URL('./profile.mjs', entry.src).href);
     const session = await readBrowserSession();
     return session?.active === 1 && session.tabs[1].position === 0;
   });
@@ -84,6 +86,7 @@ try {
   await page.close();
   page = await original.newPage();
   await page.goto(base);
+  await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
   await page.getByText('Encrypted browser profile', { exact: true }).click();
   await page.locator('#profile-passphrase').fill(secret);
   await page.getByRole('button', { name: 'Show passphrase' }).click();
@@ -113,6 +116,7 @@ try {
   const restoredRequests = await fixture(fresh);
   page = await fresh.newPage();
   await page.goto(base);
+  await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
   await page.getByText('Encrypted browser profile', { exact: true }).click();
   await page.locator('#profile-file').setInputFiles({ name: 'test.outpost', mimeType: 'application/octet-stream', buffer: archive });
   await page.locator('#profile-passphrase').fill(secret);

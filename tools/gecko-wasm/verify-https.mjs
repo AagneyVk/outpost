@@ -15,6 +15,7 @@ try {
   });
   const page = await context.newPage();
   await page.goto(lab.href);
+  await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
   await page.getByRole('button', { name: 'Start browser' }).click();
   const address = page.getByRole('textbox', { name: 'Address' });
   await address.fill(target.href, { timeout: 60000 });
