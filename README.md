@@ -19,7 +19,7 @@ OUTPOST runs a WebAssembly build of Gecko in a browser tab. You can browse in a 
 | Gecko browsing with tabs, history, and zoom | Yes | Yes |
 | Encrypted browser profile export, import, and cleanup | Yes | Yes |
 | Browser Files for local uploads and downloads | Yes | Yes |
-| Linux terminal and guest filesystem | Requires a local guest build | Yes, after building the optional runtime |
+| Linux terminal and guest filesystem | Offline terminal demo | Yes, after building the optional runtime |
 | Bundled Node network relay | Static hosting uses a separate Wisp endpoint | Yes |
 
 ## Try the portable browser workflow
@@ -55,7 +55,7 @@ npm start
 
 The runtime build downloads and generates guest assets. After it completes, **Terminal** appears in the toolbar. The guest boots on demand inside the visitor’s browser and connects its shell directly to a browser terminal. The Linux Files panel shows the guest filesystem. The main Files page uses browser storage and opens without Linux.
 
-The generated Linux filesystem exceeds GitHub Pages’ site size limit. See [hosting instructions](HOSTING.md) for deployment details.
+GitHub Pages uses a smaller Linux image that drops the guest browsers and graphics libraries. The Pages terminal runs offline and supports shell commands and Linux file transfers. See [hosting instructions](HOSTING.md) for deployment details.
 
 ## Architecture
 

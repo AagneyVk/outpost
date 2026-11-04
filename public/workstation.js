@@ -104,10 +104,12 @@ async function boot(raw){
  bootAssets.catch(() => {}); // Report failures when Linux is ready to consume the assets.
  display=physicalDisplay(innerWidth,innerHeight-48,devicePixelRatio);$('screen').replaceChildren();Object.assign($('screen').style,{width:display.cssWidth+'px',height:display.cssHeight+'px',margin:'0',position:'relative',left:(Math.floor(Math.max(0,innerWidth-display.cssWidth)/(2*display.grid))*display.grid)+'px'});
  // The lean initramfs contains modules for this exact guest kernel.
- const lean=toolsOnly&&manifest.fingerprint==='467f672439b94aec3db07e835737ad9cc29f2c76cc2353188cae1531c59401b7'
+ const toolsKernel=manifest.toolsKernel??(manifest.fingerprint==='467f672439b94aec3db07e835737ad9cc29f2c76cc2353188cae1531c59401b7'?'2df278c698.bin':null);
+ const lean=toolsOnly&&/^[a-f\d]+\.bin$/.test(toolsKernel??'')
   &&(await fetch('/vnc32/tools-initrd.gz',{method:'HEAD'})).ok;
- const bootImage=lean?{bzimage:{url:'/vnc32/rootfs/2df278c698.bin'},initrd:{url:'/vnc32/tools-initrd.gz'}}:{bzimage_initrd_from_filesystem:true};
- vm=new V86({wasm_path:'vendor/v86.wasm',memory_size:1024*1024*1024,vga_memory_size:16*1024*1024,uart1:toolsOnly,disable_keyboard:true,disable_mouse:true,net_device:{relay_url:location.origin.replace(/^http/,'wisp')+'/network/',type:'virtio'},bios:{url:'vendor/seabios.bin'},vga_bios:{url:'vendor/vgabios.bin'},filesystem:{baseurl:manifest.filesystem+'/rootfs/',basefs:manifest.filesystem+'/fs.json'},...bootImage,cmdline:'init=/sbin/outpost-init rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable console=ttyS0,115200',autostart:false});
+ const bootImage=lean?{bzimage:{url:manifest.filesystem+'/rootfs/'+toolsKernel},initrd:{url:'/vnc32/tools-initrd.gz'}}:{bzimage_initrd_from_filesystem:true};
+ const netDevice=manifest.offline?undefined:{relay_url:location.origin.replace(/^http/,'wisp')+'/network/',type:'virtio'};
+ vm=new V86({wasm_path:'vendor/v86.wasm',memory_size:1024*1024*1024,vga_memory_size:16*1024*1024,uart1:toolsOnly,disable_keyboard:true,disable_mouse:true,net_device:netDevice,bios:{url:'vendor/seabios.bin'},vga_bios:{url:'vendor/vgabios.bin'},filesystem:{baseurl:manifest.filesystem+'/rootfs/',basefs:manifest.filesystem+'/fs.json'},...bootImage,cmdline:'init=/sbin/outpost-init rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable console=ttyS0,115200',autostart:false});
  window.vm=vm;
  vm.add_listener('serial0-output-byte',b=>{window.serialText+=String.fromCharCode(b);if(serialText.length>250000)window.serialText=serialText.slice(-200000);});
  const log=setInterval(()=>{$('serial').value=serialText;},500);vm.add_listener('emulator-stopped',()=>clearInterval(log));
@@ -121,7 +123,8 @@ async function boot(raw){
  if(raw){status('Restoring your files and browser profile…');await file('/opt/outpost/import.tar',raw);raw.fill(0);await command('python3 /opt/outpost/workspace.py restore /opt/outpost/import.tar && rm /opt/outpost/import.tar',240000);}
  else await command('rm -f /home/outpost/proof.html');
  if(toolsOnly){
-  await command('chown -R outpost:outpost /home/outpost; ip link set eth0 up; ip addr replace 192.168.86.100/24 dev eth0; ip route replace default via 192.168.86.1; printf "nameserver 192.168.86.1\\n" >/etc/resolv.conf');
+  await command('chown -R outpost:outpost /home/outpost');
+  if(!manifest.offline)await command('ip link set eth0 up; ip addr replace 192.168.86.100/24 dev eth0; ip route replace default via 192.168.86.1; printf "nameserver 192.168.86.1\\n" >/etc/resolv.conf');
   status('Opening the terminal…');
   await openSerialTerminal();
   $('loading').hidden=true;clearInterval(bootTimer);started=true;dirty=true;controls(true);status('Linux tools running on this computer');
