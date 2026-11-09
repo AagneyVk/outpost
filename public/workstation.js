@@ -39,9 +39,15 @@ async function openSerialTerminal(){
  const terminal=new Terminal({cols:80,rows:24,cursorBlink:true,fontFamily:'"OUTPOST Terminal", monospace',fontSize:20,theme:{background:'#111111',foreground:'#eeeeee',cursor:'#ffffff'}});
  terminal.open($('screen'));
  const encode=new TextEncoder(),decode=new TextDecoder();
- vm.add_listener('serial1-output-byte',byte=>terminal.write(decode.decode(Uint8Array.of(byte),{stream:true})));
- terminal.onData(data=>{dirty=true;vm.serial_send_bytes(1,encode.encode(data));});
- await command("stty -F /dev/ttyS1 sane rows 24 cols 80; setsid -c su outpost -s /bin/sh -c 'cd /home/outpost; TERM=xterm exec /bin/sh -i' </dev/ttyS1 >/dev/ttyS1 2>&1 &");
+ let output='';
+ vm.add_listener('serial1-output-byte',byte=>{
+  const text=decode.decode(Uint8Array.of(byte),{stream:true});
+  output=(output+text).slice(-256);
+  terminal.write(text);
+ });
+ terminal.onData(data=>{if(serialTerminal===terminal){dirty=true;vm.serial_send_bytes(1,encode.encode(data));}});
+ await command("stty -F /dev/ttyS1 sane rows 24 cols 80 && { setsid -c su outpost -s /bin/sh -c 'cd /home/outpost; TERM=xterm PS1=\"outpost$ \" exec /bin/sh -i' </dev/ttyS1 >/dev/ttyS1 2>&1 & }");
+ await wait(()=>output.includes('outpost$ '),90000);
  serialTerminal=terminal;
  terminal.focus();
 }
