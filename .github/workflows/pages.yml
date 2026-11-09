@@ -24,8 +24,10 @@ jobs:
       - uses: actions/configure-pages@v5
         id: pages
       - name: Fetch verified Linux demo runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl --fail --location --retry 3 https://github.com/AagneyVk/outpost/releases/download/linux-demo-v1/outpost-pages-linux-v1.tar.gz --output linux.tar.gz
+          gh release download linux-demo-v1 --repo "$GITHUB_REPOSITORY" --pattern outpost-pages-linux-v1.tar.gz --output linux.tar.gz
           echo 'c0708520fcedac3d2259f4b59f8ce78101bf2e002d68a12e6e4986e0d90c63d2  linux.tar.gz' | sha256sum --check
           mkdir linux-runtime
           tar -xzf linux.tar.gz -C linux-runtime
