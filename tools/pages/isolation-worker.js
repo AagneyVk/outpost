@@ -18,7 +18,6 @@ async function readPrefetched(name) {
     return new Response(data.slice(offset, offset + length), { headers: { 'Content-Type': 'application/octet-stream' } });
   } catch (error) {
     console.warn(error);
-    prefetchPromise = undefined;
     return null;
   }
 }
