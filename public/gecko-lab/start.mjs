@@ -372,18 +372,32 @@ function reportEngineMessage(message) {
     return;
   }
   const requested = navigation.url.href;
-  const matches = result[3] === requested ||
+  let matches = result[3] === requested ||
     (result[1] === 'stop' && result[3].length === 60 && requested.startsWith(result[3]));
+  if (!matches && result[1] === 'stop' && result[2] === '0x00000000') {
+    const redirected = URL.parse(result[3]);
+    if (redirected && redirected.origin === navigation.url.origin && !redirected.username && !redirected.password) {
+      matches = true;
+      if (result[3].length < 60) navigation.finalUrl = redirected;
+    }
+  }
   if (!matches) return;
   const host = navigation.url.hostname;
   if (result[2] === '0x804b0003') return; // The document channel hands off to the network channel.
+  if (result[2] === '0x804b0002') {
+    // Redirects commonly cancel the original request before opening its replacement.
+    return;
+  }
   if (result[1] === 'stop' && result[2] === '0x00000000') {
+    const visited = navigation.finalUrl ?? navigation.url;
+    address.value = visited.href;
     if (navigation.position === undefined) {
-      stack.splice(position + 1, stack.length, navigation.url);
+      stack.splice(position + 1, stack.length, visited);
       position = stack.length - 1;
-      recordVisit(navigation.url);
+      recordVisit(visited);
     } else {
       position = navigation.position;
+      stack[position] = visited;
     }
     activeTab.position = position;
     saveTabs();
