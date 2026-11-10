@@ -39,3 +39,5 @@ jobs:
           path: pages-dist
       - uses: actions/deploy-pages@v4
         id: deploy
+        with:
+          timeout: 1800000
