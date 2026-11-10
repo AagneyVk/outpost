@@ -49,6 +49,7 @@ try {
     });
   });
   await page.goto(process.env.OUTPOST_BENCH_URL ?? 'http://127.0.0.1:3001/');
+  await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 30000 });
   await page.getByText('Network settings', { exact: true }).click();
   await page.getByLabel('Custom Wisp endpoint').fill('');
   await page.locator('#start').click();
