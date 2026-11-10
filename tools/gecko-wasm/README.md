@@ -25,6 +25,8 @@ The distributed engine applies both `patch-native-zoom.py` and `patch-input-late
 
 To compare an experimental build without changing the running application, start `node tools/gecko-wasm/test-engine-server.mjs /path/to/gecko.js/dist` and run the checks against `http://127.0.0.1:3002/`. `OUTPOST_BENCH_URL=http://127.0.0.1:3002/ node tools/gecko-wasm/input-benchmark.mjs --wheel` measures a synthetic 80-event scroll burst and a following key; the page verifies it received every scroll event and the key. This stress test does not predict latency on all sites or networks. Also run `verify-interaction.mjs`, `verify-zoom.mjs`, `verify-redirect.mjs`, `verify-profile.mjs`, and `verify-https.mjs` against the test server before replacing release assets.
 
+`verify-drag.mjs` checks scrollbar dragging and releasing a pointer outside the canvas. The current engine does not pass the scrollbar check; `--skip-scrollbar` runs the outside-release check on its own while the scrollbar issue is investigated.
+
 The source checkout is for engine development. Check its generated API and artifact names before substituting a custom build for the release bundle.
 
 The lab uses the minimal GRE and skips the desktop Firefox frontend. The experimental JavaScript JIT is disabled.

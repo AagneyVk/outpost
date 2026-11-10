@@ -1,4 +1,5 @@
 import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory } from './profile.mjs';
+import { captureDrag } from './drag-capture.mjs';
 
 const start = document.querySelector('#start');
 const startError = document.querySelector('#start-error');
@@ -8,6 +9,7 @@ new MutationObserver(() => {
   status.hidden = !message || message === 'Search Google or enter an address.' || message.startsWith('Loaded ');
 }).observe(status, { childList: true, characterData: true, subtree: true });
 const canvas = document.querySelector('#surface');
+captureDrag(canvas);
 const address = document.querySelector('#address');
 const go = document.querySelector('#go');
 const welcome = document.querySelector('#welcome');
