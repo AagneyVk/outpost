@@ -43,7 +43,7 @@ try {
       const id = packet.readUInt32LE(1);
       if (completed.has(id)) return;
       completed.add(id);
-      const html = `<body style="margin:0;background:#123456;min-height:10000px" onwheel="window.wheelCount=(window.wheelCount||0)+1"><input style="position:absolute;left:40px;top:30px;width:220px" oninput="if(event.isTrusted && (!${wheel} || window.wheelCount===80)) document.body.style.background=this.value.length%2?'#aa2233':'#123456'"></body>`;
+      const html = `<body style="margin:0;background:#123456;min-height:10000px" onwheel="window.wheelTotal=(window.wheelTotal||0)+event.deltaY"><input style="position:absolute;left:40px;top:30px;width:220px" oninput="if(event.isTrusted && (!${wheel} || Math.abs(window.wheelTotal-800)<0.01)) document.body.style.background=this.value.length%2?'#aa2233':'#123456'"></body>`;
       send(2, id, Buffer.from(`HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(html)}\r\n\r\n${html}`));
       send(4, id, Buffer.from([1]));
     });
@@ -83,7 +83,7 @@ try {
       while (gecko.running || gecko.queue.length) await new Promise(resolve => setTimeout(resolve, 10));
       return { elapsed: Math.round(performance.now() - start), events: window.traceCommands };
     });
-    await waitForColor(170); // The guest confirms receipt of all 80 wheel events and the key.
+    await waitForColor(170); // The guest confirms the complete wheel delta and the key.
     console.log(JSON.stringify({mode: 'wheel-burst', elapsed: result.elapsed,
       wheelCommands: result.events.filter(event => event.op === 3).length,
       deltaY: result.events.filter(event => event.op === 3).reduce((sum, event) => sum + event.deltaY, 0),

@@ -1,5 +1,6 @@
 import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory } from './profile.mjs';
 import { captureDrag } from './drag-capture.mjs';
+import { optimizeWheelQueue } from './wheel-queue.mjs';
 
 const start = document.querySelector('#start');
 const startError = document.querySelector('#start-error');
@@ -501,6 +502,7 @@ start.addEventListener('click', async () => {
       profile: profileName(),
       env: { GECKO_NOWASMJIT: '1' },
     });
+    optimizeWheelQueue(gecko, canvas);
     await gecko.init();
     await restoreTabs().catch(error => console.warn('Could not restore tabs', error));
     const savedHistory = await readBrowserHistory().catch(error => {

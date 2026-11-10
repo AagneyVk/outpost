@@ -77,11 +77,15 @@ flowchart LR
 
 ```sh
 npm test
+node tools/gecko-wasm/verify-trackpad.mjs
+node tools/gecko-wasm/verify-scroll-reversal.mjs http://127.0.0.1:3001/ --busy
 node tools/gecko-wasm/verify-https.mjs
 node tools/gecko-wasm/verify-profile.mjs
 ```
 
 Run the browser checks with the preview server running. The HTTPS check uses desktop Edge, and the profile check uses Chrome with synthetic website traffic. The profile test checks tab restoration, a signed-in page, history cleanup, and confirmed removal of the local profile.
+
+When a page falls behind, OUTPOST can combine adjacent, compatible touchpad updates that are still waiting for Gecko. Direction changes remain separate, and the combined updates retain their total scroll distance. This can reduce the number of wheel callbacks a busy website receives. The trackpad checks cover fractional movement, nested scrolling, and quick reversals on a simulated busy page; physical device testing is still useful.
 
 | Path | Purpose |
 | --- | --- |
