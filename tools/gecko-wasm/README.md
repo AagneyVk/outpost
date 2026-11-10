@@ -21,7 +21,9 @@ git checkout --detach bc69aaa5e2c5388bcf93a43b975b490bb940f4c0
 make libxul RELEASE=1
 ```
 
-To build native page zoom, run `python3 /path/to/outpost/tools/gecko-wasm/patch-native-zoom.py "$PWD"` after checking out the pinned revision and before building. The patch adds a bounded command to set the windowless browsing context's full zoom. OUTPOST enables it only when the engine advertises the capability. Rebuild and replace both the JavaScript bundle and WASM together, then verify that zoom redraws text while the canvas backing dimensions stay fixed.
+The distributed engine applies both `patch-native-zoom.py` and `patch-input-latency.py` to that pinned revision before building. The latter pairs an engine-side completion notification with the JavaScript command mailbox and avoids intermediate software paints during a queued scroll burst while forwarding every wheel event. Apply both scripts before `make libxul RELEASE=1`, and replace the JavaScript bundle and WASM together. The engine's native zoom command is currently disabled in OUTPOST: its software paint path does not yet render native zoom correctly, and applying it before a restored page exists can prevent startup. The existing bitmap-based zoom remains in use.
+
+To compare an experimental build without changing the running application, start `node tools/gecko-wasm/test-engine-server.mjs /path/to/gecko.js/dist` and run the checks against `http://127.0.0.1:3002/`. `OUTPOST_BENCH_URL=http://127.0.0.1:3002/ node tools/gecko-wasm/input-benchmark.mjs --wheel` measures a synthetic 80-event scroll burst and a following key; the page verifies it received every scroll event and the key. This stress test does not predict latency on all sites or networks. Also run `verify-interaction.mjs`, `verify-zoom.mjs`, `verify-redirect.mjs`, `verify-profile.mjs`, and `verify-https.mjs` against the test server before replacing release assets.
 
 The source checkout is for engine development. Check its generated API and artifact names before substituting a custom build for the release bundle.
 

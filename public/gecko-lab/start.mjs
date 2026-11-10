@@ -512,7 +512,10 @@ start.addEventListener('click', async () => {
       } catch {}
     }
     clearHistory.disabled = false;
-    nativeZoom = (await gecko.evalChrome('outpost:zoom-capability')) === 'outpost-native-zoom-v1';
+    // The current software paint path does not yet render native zoom correctly,
+    // even when the engine advertises it. Keep the existing zoom path until the
+    // renderer and restored-session startup are verified together.
+    nativeZoom = false;
     let appliedScale;
     const drawSize = async () => {
       const size = surfaceSize();

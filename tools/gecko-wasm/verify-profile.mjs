@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { chromium } from 'playwright-core';
 
 const base = process.argv[2] ?? 'http://127.0.0.1:3001/';
 const customRelay = process.argv[3];
+const restoreBase = process.argv[4] ?? base;
+const upgradedEngine = process.argv[5];
 const site = 'http://outpost-fixture.test/';
 const secret = 'test7!Qz';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -84,6 +87,27 @@ try {
     return false;
   });
   await page.close();
+  if (upgradedEngine) {
+    for (const name of ['gecko.js', 'gecko.wasm.zst']) {
+      await original.route('**/gecko-lab/engine/' + name, route => route.fulfill({
+        path: path.resolve(upgradedEngine, name),
+        contentType: name.endsWith('.js') ? 'text/javascript' : 'application/octet-stream',
+      }));
+    }
+    page = await original.newPage();
+    await page.goto(base);
+    await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
+    if (customRelay) {
+      await page.getByText('Network settings', { exact: true }).click();
+      await page.getByLabel('Custom Wisp endpoint').fill(customRelay);
+    }
+    const before = initialRequests.length;
+    await page.locator('#start').click();
+    await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
+    assert(initialRequests.slice(before).some(request => request.authenticated), 'The upgraded engine must reopen the existing login');
+    assert.equal(await page.getByRole('textbox', { name: 'Address' }).inputValue(), site + 'proof');
+    await page.close();
+  }
   page = await original.newPage();
   await page.goto(base);
   await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
@@ -115,7 +139,7 @@ try {
   const fresh = await browser.newContext();
   const restoredRequests = await fixture(fresh);
   page = await fresh.newPage();
-  await page.goto(base);
+  await page.goto(restoreBase);
   await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
   await page.getByText('Encrypted browser profile', { exact: true }).click();
   await page.locator('#profile-file').setInputFiles({ name: 'test.outpost', mimeType: 'application/octet-stream', buffer: archive });

@@ -33,7 +33,7 @@ try {
       send(4, id, Buffer.from([1]));
     });
   });
-  await page.goto('http://127.0.0.1:3001/');
+  await page.goto(process.argv[2] ?? 'http://127.0.0.1:3001/');
   await page.getByText('Network settings', { exact: true }).click();
   await page.getByLabel('Custom Wisp endpoint').fill('');
   await page.locator('#start').click();
