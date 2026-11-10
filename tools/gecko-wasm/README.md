@@ -4,7 +4,7 @@ This isolated prototype uses the upstream minimal embedding API with OUTPOST-own
 
 ## Run the lab
 
-The lab targets the [v0.0.1 release](https://github.com/HeyPuter/firefox-wasm/releases/tag/v0.0.1). Extract `gecko.js/dist/gecko.js` and `gecko.js/dist/gecko.wasm.zst` from its library archive into `public/gecko-lab/engine/`. The release inlines the minimal GRE into the JavaScript bundle. Keep the upstream MPL-2.0 notices and source revision with any distribution.
+The lab targets the [v0.0.1 release](https://github.com/HeyPuter/firefox-wasm/releases/tag/v0.0.1), with the source patches described below. The customized JavaScript bundle and compressed WASM are shipped together in `public/gecko-lab/engine/`; the bundle inlines the minimal GRE. Keep the upstream MPL-2.0 notices and source revision with any distribution.
 
 Start OUTPOST's local server and open `/`. Click Start browser and enter a public HTTP or HTTPS URL in the address bar. Gecko validates HTTPS certificates inside the engine.
 
@@ -21,7 +21,7 @@ git checkout --detach bc69aaa5e2c5388bcf93a43b975b490bb940f4c0
 make libxul RELEASE=1
 ```
 
-The distributed engine applies both `patch-native-zoom.py` and `patch-input-latency.py` to that pinned revision before building. The latter pairs an engine-side completion notification with the JavaScript command mailbox and avoids intermediate software paints during a queued scroll burst while forwarding every wheel event. Apply both scripts before `make libxul RELEASE=1`, and replace the JavaScript bundle and WASM together. The engine's native zoom command is currently disabled in OUTPOST: its software paint path does not yet render native zoom correctly, and applying it before a restored page exists can prevent startup. The existing bitmap-based zoom remains in use.
+The distributed engine applies both `patch-native-zoom.py` and `patch-input-latency.py` to that pinned revision before building. The latter pairs an engine-side completion notification with the JavaScript command mailbox and avoids intermediate software paints during a queued scroll burst while forwarding every wheel event. Apply both scripts before `make libxul RELEASE=1`, and publish the JavaScript bundle and WASM together as `gecko-input-v1.js` and `gecko-input-v1.wasm.zst`. Keep the earlier unversioned pair available so a cached older app does not combine incompatible engine assets. The engine's native zoom command is currently disabled in OUTPOST: its software paint path does not yet render native zoom correctly, and applying it before a restored page exists can prevent startup. The existing bitmap-based zoom remains in use.
 
 To compare an experimental build without changing the running application, start `node tools/gecko-wasm/test-engine-server.mjs /path/to/gecko.js/dist` and run the checks against `http://127.0.0.1:3002/`. `OUTPOST_BENCH_URL=http://127.0.0.1:3002/ node tools/gecko-wasm/input-benchmark.mjs --wheel` measures a synthetic 80-event scroll burst and a following key; the page verifies it received every scroll event and the key. This stress test does not predict latency on all sites or networks. Also run `verify-interaction.mjs`, `verify-zoom.mjs`, `verify-redirect.mjs`, `verify-profile.mjs`, and `verify-https.mjs` against the test server before replacing release assets.
 

@@ -62,6 +62,13 @@ async function navigate(page, path, color) {
 try {
   const original = await browser.newContext();
   const initialRequests = await fixture(original);
+  if (upgradedEngine) {
+    await original.route('**/gecko-lab/start.mjs', async route => {
+      const response = await route.fetch();
+      const source = (await response.text()).replaceAll('gecko-input-v1', 'gecko');
+      await route.fulfill({ response, body: source });
+    });
+  }
   let page = await original.newPage();
   await page.goto(base);
   await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
@@ -88,8 +95,9 @@ try {
   });
   await page.close();
   if (upgradedEngine) {
+    await original.unroute('**/gecko-lab/start.mjs');
     for (const name of ['gecko.js', 'gecko.wasm.zst']) {
-      await original.route('**/gecko-lab/engine/' + name, route => route.fulfill({
+      await original.route('**/gecko-lab/engine/' + name.replace('gecko', 'gecko-input-v1'), route => route.fulfill({
         path: path.resolve(upgradedEngine, name),
         contentType: name.endsWith('.js') ? 'text/javascript' : 'application/octet-stream',
       }));
