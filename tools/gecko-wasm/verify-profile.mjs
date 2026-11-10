@@ -6,6 +6,8 @@ const base = process.argv[2] ?? 'http://127.0.0.1:3001/';
 const customRelay = process.argv[3];
 const restoreBase = process.argv[4] ?? base;
 const upgradedEngine = process.argv[5];
+const baselineEngineName = process.argv[6] ?? 'gecko';
+const appEngineName = process.argv[7] ?? 'gecko-input-v1';
 const site = 'http://outpost-fixture.test/';
 const secret = 'test7!Qz';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -65,7 +67,7 @@ try {
   if (upgradedEngine) {
     await original.route('**/gecko-lab/start.mjs', async route => {
       const response = await route.fetch();
-      const source = (await response.text()).replaceAll('gecko-input-v1', 'gecko');
+      const source = (await response.text()).replaceAll(appEngineName, baselineEngineName);
       await route.fulfill({ response, body: source });
     });
   }
@@ -97,7 +99,7 @@ try {
   if (upgradedEngine) {
     await original.unroute('**/gecko-lab/start.mjs');
     for (const name of ['gecko.js', 'gecko.wasm.zst']) {
-      await original.route('**/gecko-lab/engine/' + name.replace('gecko', 'gecko-input-v1'), route => route.fulfill({
+      await original.route('**/gecko-lab/engine/' + name.replace('gecko', appEngineName), route => route.fulfill({
         path: path.resolve(upgradedEngine, name),
         contentType: name.endsWith('.js') ? 'text/javascript' : 'application/octet-stream',
       }));

@@ -21,11 +21,13 @@ git checkout --detach bc69aaa5e2c5388bcf93a43b975b490bb940f4c0
 make libxul RELEASE=1
 ```
 
-The distributed engine applies both `patch-native-zoom.py` and `patch-input-latency.py` to that pinned revision before building. The latter pairs an engine-side completion notification with the JavaScript command mailbox and avoids intermediate software paints during a queued scroll burst while forwarding every wheel event. Apply both scripts before `make libxul RELEASE=1`, and publish the JavaScript bundle and WASM together as `gecko-input-v1.js` and `gecko-input-v1.wasm.zst`. Keep the earlier unversioned pair available so a cached older app does not combine incompatible engine assets. The engine's native zoom command is currently disabled in OUTPOST: its software paint path does not yet render native zoom correctly, and applying it before a restored page exists can prevent startup. The existing bitmap-based zoom remains in use.
+The distributed engine applies `patch-native-zoom.py`, `patch-input-latency.py` and `patch-trackpad.py` to that pinned revision before building, in that order. The input patches wake the command mailbox on completion, reduce intermediate paints during queued scrolling, preserve fractional wheel deltas, and use Gecko's own default scroll handling. Apply the scripts before `make libxul RELEASE=1`, and publish the JavaScript bundle and WASM together as `gecko-input-v2.js` and `gecko-input-v2.wasm.zst`. Keep earlier engine pairs available so a cached older app does not combine incompatible assets. The engine's native zoom command is currently disabled in OUTPOST: its software paint path does not yet render native zoom correctly, and applying it before a restored page exists can prevent startup. The existing bitmap-based zoom remains in use.
 
 To compare an experimental build without changing the running application, start `node tools/gecko-wasm/test-engine-server.mjs /path/to/gecko.js/dist` and run the checks against `http://127.0.0.1:3002/`. `OUTPOST_BENCH_URL=http://127.0.0.1:3002/ node tools/gecko-wasm/input-benchmark.mjs --wheel` measures a synthetic 80-event scroll burst and a following key; the page verifies it received every scroll event and the key. This stress test does not predict latency on all sites or networks. Also run `verify-interaction.mjs`, `verify-zoom.mjs`, `verify-redirect.mjs`, `verify-profile.mjs`, and `verify-https.mjs` against the test server before replacing release assets.
 
 `verify-drag.mjs` checks scrollbar dragging and releasing a pointer outside the canvas. The current engine does not pass the scrollbar check; `--skip-scrollbar` runs the outside-release check on its own while the scrollbar issue is investigated.
+
+`verify-trackpad.mjs` checks fractional and reverse wheel deltas, nested and horizontal scrolling, canceled events, line-mode input and a real browser wheel event. It uses synthetic content and cannot replace testing a physical touchpad across devices.
 
 The source checkout is for engine development. Check its generated API and artifact names before substituting a custom build for the release bundle.
 
@@ -35,7 +37,7 @@ The lab uses the minimal GRE and skips the desktop Firefox frontend. The experim
 
 To use a separate relay, expand **Network settings** before starting Gecko and enter its `wss://` URL. The relay must support Wisp and accept WebSocket upgrades from the preview's origin. Leave the field blank for OUTPOST's bundled relay.
 
-Close the running OUTPOST browser tab, then reopen OUTPOST and expand **Encrypted browser profile** before starting Gecko. Enter a passphrase of at least 16 characters and export. On another browser, select the export and enter its passphrase, import, then start Gecko. An import is staged in a separate profile directory before it becomes active.
+Close the running OUTPOST browser tab, then reopen OUTPOST and expand **Encrypted browser profile** before starting Gecko. Enter an eight-character passphrase containing a number and a symbol, with no spaces, and export. On another browser, select the export and enter its passphrase, import, then start Gecko. An import is staged in a separate profile directory before it becomes active.
 
 The export is encrypted on the device. The active profile is stored in the host browser's origin storage. On a borrowed computer, clear OUTPOST's site data after verifying that you have your export. Keep the passphrase and matching engine build.
 
