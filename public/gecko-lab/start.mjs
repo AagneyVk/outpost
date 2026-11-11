@@ -489,7 +489,7 @@ start.addEventListener('click', async () => {
     if (custom && (relay.protocol !== 'wss:' || relay.username || relay.password || relay.hash)) {
       throw Error('Enter a secure wss:// relay URL without credentials or a fragment.');
     }
-    const { Gecko } = await import('./engine/gecko-input-v2.js');
+    const { Gecko } = await import('./engine/gecko-input-v3.js');
     const initial = surfaceSize();
     gecko = new Gecko({
       canvas,
