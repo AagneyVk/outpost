@@ -20,9 +20,9 @@ const server = http.createServer(async (req, res) => {
     const alternate = pathname.startsWith('/gecko-lab/engine/') &&
       ['gecko.js', 'gecko.wasm.zst', 'gecko-input-v1.js', 'gecko-input-v1.wasm.zst',
         'gecko-input-v2.js', 'gecko-input-v2.wasm.zst', 'gecko-input-v3.js',
-        'gecko-input-v4.js', 'gecko-input-v4.wasm.zst'].includes(name);
+        'gecko-input-v4.js', 'gecko-input-v4.wasm.zst', 'gecko-input-v5.js'].includes(name);
     const root = alternate ? engine : app;
-    const file = alternate ? path.join(root, name.replace(/^gecko-input-v[1234]/, 'gecko')) : path.resolve(root, '.' + decodeURIComponent(pathname));
+    const file = alternate ? path.join(root, name.replace(/^gecko-input-v[12345]/, 'gecko')) : path.resolve(root, '.' + decodeURIComponent(pathname));
     if (!file.startsWith(root + path.sep)) return res.writeHead(403).end();
     const info = await stat(file);
     if (!info.isFile()) throw Error('Not a file');

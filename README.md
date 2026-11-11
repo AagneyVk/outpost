@@ -100,6 +100,7 @@ When a page falls behind, OUTPOST can combine adjacent, compatible touchpad upda
 
 - Tabs share one Gecko view. Switching tabs reloads the selected page. Unsaved forms and live background activity do not travel with the export.
 - Native page zoom renders at the display's pixel resolution. Software rendering can be slower at higher display resolutions or on complex pages.
+- Image-heavy pages can use substantial memory. The WebAssembly engine has a finite address space, and a stalled session may need to be restarted.
 - Clear browser profiles removes the Gecko profile for the current OUTPOST address. Browser Files, Linux saves, and downloaded exports have separate lifecycles.
 - New Gecko exports use exactly eight characters with a number and a symbol. Short passphrases are easier to guess, especially if an attacker has the archive.
 - OUTPOST has no independent security audit or public uptime guarantee.

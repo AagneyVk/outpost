@@ -1,6 +1,7 @@
 import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory } from './profile.mjs';
 import { captureDrag } from './drag-capture.mjs';
 import { optimizeWheelQueue } from './wheel-queue.mjs';
+import { watchEngine } from './engine-watchdog.mjs';
 
 const start = document.querySelector('#start');
 const startError = document.querySelector('#start-error');
@@ -30,6 +31,8 @@ sceneView.addEventListener('click', () => { scene.hidden = true; canvas.focus();
 let gecko;
 let navigation;
 let toolsWindow;
+const recovery = document.querySelector('#browser-recovery');
+document.querySelector('#restart-engine').addEventListener('click', () => location.reload());
 document.querySelector('#workspace-tools').addEventListener('click', event => {
   const link = event.target.closest('a');
   if (!link) return;
@@ -491,7 +494,7 @@ start.addEventListener('click', async () => {
     if (custom && (relay.protocol !== 'wss:' || relay.username || relay.password || relay.hash)) {
       throw Error('Enter a secure wss:// relay URL without credentials or a fragment.');
     }
-    const { Gecko } = await import('./engine/gecko-input-v4.js');
+    const { Gecko } = await import('./engine/gecko-input-v5.js');
     const initial = surfaceSize();
     gecko = new Gecko({
       canvas,
@@ -506,6 +509,7 @@ start.addEventListener('click', async () => {
     });
     optimizeWheelQueue(gecko, canvas);
     await gecko.init();
+    watchEngine(gecko, { show: () => { recovery.hidden = false; }, hide: () => { recovery.hidden = true; } });
     await restoreTabs().catch(error => console.warn('Could not restore tabs', error));
     const savedHistory = await readBrowserHistory().catch(error => {
       console.warn('Could not read history', error);

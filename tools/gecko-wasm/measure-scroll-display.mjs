@@ -8,7 +8,7 @@ try {
   await context.route('**/gecko-lab/start.mjs', async route => {
     const response = await route.fetch();
     let source = await response.text();
-    if (baseline) source = source.replace('gecko-input-v4.js','gecko-input-v3.js')
+    if (baseline) source = source.replace('gecko-input-v5.js','gecko-input-v3.js')
       .replace('gecko-input-v4.wasm.zst','gecko-input-v2.wasm.zst').replace('    nativeZoom = true;', '    nativeZoom = false;');
     source = source.replace('await gecko.init();', `await gecko.init();
       window.testGecko = gecko; window.inputTrace = []; window.paintTrace = []; window.commandTrace = [];

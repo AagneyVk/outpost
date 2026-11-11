@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tools/portable.test.mjs tools/relay.test.mjs tools/local-websocket.test.mjs tools/gecko-wasm/wheel-queue.test.mjs",
+    "test": "node --test tools/portable.test.mjs tools/relay.test.mjs tools/local-websocket.test.mjs tools/gecko-wasm/wheel-queue.test.mjs tools/gecko-wasm/engine-watchdog.test.mjs tools/gecko-wasm/engine-pointer.test.mjs",
     "test:storage": "node tools/vault.test.mjs",
     "test:workstation": "node tools/workstation-e2e.mjs",
     "test:acceptance": "node tools/full-acceptance.mjs",

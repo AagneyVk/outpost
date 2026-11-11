@@ -69,7 +69,7 @@ try {
     await original.route('**/gecko-lab/start.mjs', async route => {
       const response = await route.fetch();
       const source = (await response.text())
-        .replace('gecko-input-v4.js', 'gecko-input-v3.js')
+        .replace('gecko-input-v5.js', 'gecko-input-v3.js')
         .replace('gecko-input-v4.wasm.zst', 'gecko-input-v2.wasm.zst')
         .replace('    nativeZoom = true;', '    nativeZoom = false;');
       await route.fulfill({ response, body: source });
