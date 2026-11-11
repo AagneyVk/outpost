@@ -39,8 +39,12 @@ try {
   await page.locator('#address').fill('http://trackpad-fixture.test/');
   await page.locator('#address').press('Enter');
   await page.locator('#status').filter({ hasText: 'Loaded trackpad-fixture.test' }).waitFor({ state: 'attached', timeout: 20000 });
+  const zoom = Number(process.env.OUTPOST_TEST_ZOOM || 100);
+  for (let i = 100; i < zoom; i += 10) await page.locator('#zoom-in').click();
+  if (zoom !== 100) await page.waitForTimeout(500);
   const exec = script => page.evaluate(script => window.testGecko.evalChrome(script), script);
   async function gesture(x, delta, count, delay, mode = 0, deltaX = 0) {
+    x *= zoom / 100;
     const rect = await page.locator('#surface').boundingBox();
     await page.mouse.move(rect.x + x, rect.y + 100);
     await page.evaluate(async ({ x, delta, count, delay, mode, deltaX }) => {
@@ -81,7 +85,7 @@ try {
   const lines = await gesture(500, 1, 2, 4, 1);
   assert(lines.root >= prevented.root + 20, 'Line-mode wheel input must be converted to pixels');
   const rect = await page.locator('#surface').boundingBox();
-  await page.mouse.move(rect.x + 500, rect.y + 100);
+  await page.mouse.move(rect.x + 500 * zoom / 100, rect.y + 100);
   await page.mouse.wheel(0, 20);
   await page.waitForTimeout(800);
   const trustedRoot = Number(await exec('scrollY'));

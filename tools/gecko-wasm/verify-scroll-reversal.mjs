@@ -47,8 +47,12 @@ try {
   await page.locator('#address').fill('http://reversal-fixture.test/');
   await page.locator('#address').press('Enter');
   await page.locator('#status').filter({ hasText: 'Loaded reversal-fixture.test' }).waitFor({ state: 'attached', timeout: 20000 });
+  const zoom = Number(process.env.OUTPOST_TEST_ZOOM || 100);
+  for (let level = 100; level < zoom; level += 10) await page.locator('#zoom-in').click();
+  if (zoom !== 100) await page.waitForTimeout(500);
   const exec = script => page.evaluate(script => window.testGecko.evalChrome(script), script);
   async function runGesture(x, nested) {
+    x *= zoom / 100;
     await exec(`scrollTo(0,3000); document.querySelector('#nested').scrollTop=2000; records=[]; 'ready'`);
     await page.waitForTimeout(500);
     const rect = await page.locator('#surface').boundingBox();

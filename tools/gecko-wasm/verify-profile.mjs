@@ -8,6 +8,7 @@ const restoreBase = process.argv[4] ?? base;
 const upgradedEngine = process.argv[5];
 const baselineEngineName = process.argv[6] ?? 'gecko';
 const appEngineName = process.argv[7] ?? 'gecko-input-v1';
+const legacyUpgrade = process.env.OUTPOST_TEST_UPGRADE === '1';
 const site = 'http://outpost-fixture.test/';
 const secret = 'test7!Qz';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -37,7 +38,7 @@ async function fixture(context) {
       const authenticated = /^Cookie:.*outpost_fixture=portable-session/im.test(request);
       requests.push({ seed, authenticated });
       const color = seed ? '#0bbf75' : authenticated ? '#175de0' : '#dc3248';
-      const html = `<body style="background:${color}">OUTPOST profile fixture</body>`;
+      const html = `<body style="margin:0;background:${color}"><div style="width:100px;height:80px;background:#aa2233"></div>OUTPOST profile fixture</body>`;
       const cookie = seed ? 'Set-Cookie: outpost_fixture=portable-session; Path=/; HttpOnly; Max-Age=86400\r\n' : '';
       send(2, id, Buffer.from(`HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ${Buffer.byteLength(html)}\r\nConnection: close\r\n${cookie}\r\n${html}`));
       send(4, id, Buffer.from([1]));
@@ -64,7 +65,16 @@ async function navigate(page, path, color) {
 try {
   const original = await browser.newContext();
   const initialRequests = await fixture(original);
-  if (upgradedEngine) {
+  if (legacyUpgrade) {
+    await original.route('**/gecko-lab/start.mjs', async route => {
+      const response = await route.fetch();
+      const source = (await response.text())
+        .replace('gecko-input-v4.js', 'gecko-input-v3.js')
+        .replace('gecko-input-v4.wasm.zst', 'gecko-input-v2.wasm.zst')
+        .replace('    nativeZoom = true;', '    nativeZoom = false;');
+      await route.fulfill({ response, body: source });
+    });
+  } else if (upgradedEngine) {
     await original.route('**/gecko-lab/start.mjs', async route => {
       const response = await route.fetch();
       const source = (await response.text()).replaceAll(appEngineName, baselineEngineName);
@@ -80,11 +90,12 @@ try {
   await page.getByRole('textbox', { name: 'Address' }).fill(site + 'proof');
   await page.getByRole('textbox', { name: 'Address' }).press('Enter');
   await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
+  for (let i = 0; i < 5; i++) await page.locator('#zoom-in').click();
   await page.waitForFunction(async () => {
     const entry = document.querySelector('script[type="module"][src$="/start.mjs"]');
     const { readBrowserSession } = await import(new URL('./profile.mjs', entry.src).href);
     const session = await readBrowserSession();
-    return session?.active === 1 && session.tabs[1].position === 0;
+    return session?.active === 1 && session.tabs[1].position === 0 && session.zoom === 150;
   });
   // Allow the persistent cookie write to reach OPFS before closing the engine tab.
   await page.waitForFunction(async () => {
@@ -96,6 +107,23 @@ try {
     return false;
   });
   await page.close();
+  if (legacyUpgrade) {
+    await original.unroute('**/gecko-lab/start.mjs');
+    page = await original.newPage();
+    await page.goto(base);
+    await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
+    if (customRelay) {
+      await page.getByText('Network settings', { exact: true }).click();
+      await page.getByLabel('Custom Wisp endpoint').fill(customRelay);
+    }
+    const before = initialRequests.length;
+    await page.locator('#start').click();
+    await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state:'attached', timeout:30000 });
+    assert(initialRequests.slice(before).some(request => request.authenticated), 'The new engine must reopen the existing login');
+    assert.equal(await page.locator('#zoom-reset').textContent(), '150%');
+    await page.waitForFunction(() => document.querySelector('#surface').getContext('2d').getImageData(120,40,1,1).data[0] === 170, null, {timeout:20000});
+    await page.close();
+  }
   if (upgradedEngine) {
     await original.unroute('**/gecko-lab/start.mjs');
     for (const name of ['gecko.js', 'gecko.wasm.zst']) {
@@ -162,6 +190,8 @@ try {
   }
   await page.locator('#start').click();
   await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
+  assert.equal(await page.locator('#zoom-reset').textContent(), '150%');
+  await page.waitForFunction(() => document.querySelector('#surface').getContext('2d').getImageData(120, 40, 1, 1).data[0] === 170, null, { timeout: 20000 });
   assert.equal(await page.getByRole('textbox', { name: 'Address' }).inputValue(), site + 'proof');
   assert.equal(await page.locator('#tabs [aria-current]').count(), 2);
   assert.equal(await page.locator('#tabs [aria-current]').nth(1).getAttribute('aria-current'), 'true');

@@ -195,6 +195,7 @@ document.querySelector('#new-tab').onclick = () => {
 let zoom = 100;
 let resizeSurface;
 let nativeZoom = false;
+let zoomDocumentReady = false;
 
 function updateControls() {
   const ready = !address.disabled && !navigation;
@@ -451,6 +452,7 @@ async function navigate(url, targetPosition) {
   updateControls();
   try {
     await gecko.load(url.href);
+    zoomDocumentReady = true;
     if (nativeZoom) await resizeSurface();
     canvas.focus();
   } catch (error) {
@@ -489,7 +491,7 @@ start.addEventListener('click', async () => {
     if (custom && (relay.protocol !== 'wss:' || relay.username || relay.password || relay.hash)) {
       throw Error('Enter a secure wss:// relay URL without credentials or a fragment.');
     }
-    const { Gecko } = await import('./engine/gecko-input-v3.js');
+    const { Gecko } = await import('./engine/gecko-input-v4.js');
     const initial = surfaceSize();
     gecko = new Gecko({
       canvas,
@@ -498,7 +500,7 @@ start.addEventListener('click', async () => {
       wispUrl: relay.href,
       print: reportEngineMessage,
       printErr: reportEngineMessage,
-      wasm: { url: new URL('./engine/gecko-input-v2.wasm.zst', import.meta.url).href, compressed: true },
+      wasm: { url: new URL('./engine/gecko-input-v4.wasm.zst', import.meta.url).href, compressed: true },
       profile: profileName(),
       env: { GECKO_NOWASMJIT: '1' },
     });
@@ -516,14 +518,13 @@ start.addEventListener('click', async () => {
       } catch {}
     }
     clearHistory.disabled = false;
-    // The current software paint path does not yet render native zoom correctly,
-    // even when the engine advertises it. Keep the existing zoom path until the
-    // renderer and restored-session startup are verified together.
-    nativeZoom = false;
+    // This engine paints native page zoom at device resolution. Delay setting
+    // the scale until a document exists, including for restored sessions.
+    nativeZoom = true;
     let appliedScale;
     const drawSize = async () => {
       const size = surfaceSize();
-      if (nativeZoom && position >= 0) {
+      if (nativeZoom && zoomDocumentReady) {
         const scale = Math.round((window.devicePixelRatio || 1) * zoom * 10);
         if (scale !== appliedScale) {
           const result = await gecko.evalChrome('outpost:zoom:' + scale);

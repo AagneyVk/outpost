@@ -5,13 +5,12 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   const context = await browser.newContext({ viewport: { width: 1400, height: 850 } });
   const baseline = process.argv.includes('--baseline');
-  if (baseline) await context.route('**/gecko-lab/engine/gecko-input-v3.js', async route => {
-    const response = await route.fetch({ url: route.request().url().replace('gecko-input-v3.js', 'gecko-input-v2.js') });
-    await route.fulfill({ response });
-  });
   await context.route('**/gecko-lab/start.mjs', async route => {
     const response = await route.fetch();
-    const source = (await response.text()).replace('await gecko.init();', `await gecko.init();
+    let source = await response.text();
+    if (baseline) source = source.replace('gecko-input-v4.js','gecko-input-v3.js')
+      .replace('gecko-input-v4.wasm.zst','gecko-input-v2.wasm.zst').replace('    nativeZoom = true;', '    nativeZoom = false;');
+    source = source.replace('await gecko.init();', `await gecko.init();
       window.testGecko = gecko; window.inputTrace = []; window.paintTrace = []; window.commandTrace = [];
       const originalRun = gecko.run.bind(gecko), originalRunCmd = gecko.runCmd.bind(gecko), originalBlit = gecko.blit.bind(gecko);
       gecko.run = item => { item.queued = performance.now(); return originalRun(item); };
@@ -46,6 +45,9 @@ try {
     });
   });
   const page = await context.newPage();
+  if (process.env.OUTPOST_PAINT_PROFILE) page.on('console', message => {
+    if (message.text().includes('OUTPOST_PAINT_PROFILE')) console.log(message.text());
+  });
   await page.goto(process.argv.find(arg => /^https?:/.test(arg)) ?? 'http://127.0.0.1:3001/');
   await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 30000 });
   await page.getByText('Network settings', { exact: true }).click();
@@ -54,32 +56,42 @@ try {
   await page.locator('#address').fill('http://scroll-display.test/', { timeout: 60000 });
   await page.locator('#address').press('Enter');
   await page.locator('#status').filter({ hasText: 'Loaded scroll-display.test' }).waitFor({ state:'attached', timeout:30000 });
+  const zoom = Number(process.env.OUTPOST_MEASURE_ZOOM || 100);
+  for (let level = 100; level < zoom; level += 10) await page.locator('#zoom-in').click();
   await page.waitForTimeout(500);
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async zoom => {
     window.inputTrace=[]; window.paintTrace=[]; window.commandTrace=[];
     const canvas=document.querySelector('#surface'), rect=canvas.getBoundingClientRect(), ctx=canvas.getContext('2d');
-    const samples=[], begin=performance.now(); let sent=0, running=true;
-    const sample=()=>{const p=ctx.getImageData(120,120,1,1).data;samples.push({t:performance.now()-begin,sent,shown:p[0]+256*p[1]});if(running)requestAnimationFrame(sample);};
+    const samples=[], sentAt=[], begin=performance.now(); let sent=0, running=true;
+    const x=Math.round(120*zoom/100*canvas.width/rect.width), y=Math.round(120*zoom/100*canvas.height/rect.height);
+    const sample=()=>{const p=ctx.getImageData(x,y,1,1).data;samples.push({t:performance.now()-begin,sent,shown:p[0]+256*p[1]});if(running)requestAnimationFrame(sample);};
     requestAnimationFrame(sample);
     for(let i=0;i<120;i++){
       sent+=4;
+      sentAt.push({sent,t:performance.now()-begin});
       canvas.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:rect.left+500,clientY:rect.top+200,deltaY:4}));
       await new Promise(resolve=>setTimeout(resolve,8));
     }
     const end=performance.now();
     await new Promise(resolve=>setTimeout(resolve,1200));
     running=false;
-    return {samples,input:window.inputTrace,commands:window.commandTrace,paint:window.paintTrace.filter(x=>x.result>0&&x.start>=begin&&x.start<=end),width:canvas.width,height:canvas.height};
-  });
+    return {samples,sentAt,input:window.inputTrace,commands:window.commandTrace,paint:window.paintTrace.filter(x=>x.result>0&&x.start>=begin&&x.start<=end),width:canvas.width,height:canvas.height};
+  }, zoom);
   const sorted = values => values.sort((a,b)=>a-b);
   const percentile = (values,p) => values.length ? Math.round(sorted(values)[Math.floor((values.length-1)*p)]*10)/10 : 0;
   const during = result.samples.filter(s=>s.sent>40&&s.sent<480);
   const intervals = result.samples.slice(1).map((s,i)=>s.t-result.samples[i].t);
   const paintIntervals = result.paint.slice(1).map((p,i)=>p.start-result.paint[i].start);
-  assert.equal(result.samples.at(-1).shown, 480, 'The last scroll position must reach the displayed canvas');
+  const displayedScale = baseline ? 1 : zoom / 100;
+  const displayedDelays = during.filter(s=>s.shown>0).map(s=>{
+    const input = result.sentAt.find(entry=>entry.sent>=s.shown*displayedScale-.01);
+    return input ? Math.max(0,s.t-input.t) : 0;
+  });
+  assert(Math.abs(result.samples.at(-1).shown - 480/displayedScale) <= 2, 'The last scroll position must reach the displayed canvas');
   assert(result.paint.length > 0, 'The gesture must produce visible frames');
-  console.log(JSON.stringify({baseline,size:[result.width,result.height],samples:result.samples.length, final:result.samples.at(-1),
-    lagPixels:{median:percentile(during.map(s=>s.sent-s.shown),.5),p95:percentile(during.map(s=>s.sent-s.shown),.95)},
+  console.log(JSON.stringify({baseline,zoom,size:[result.width,result.height],samples:result.samples.length, final:result.samples.at(-1),
+    lagPixels:{median:percentile(during.map(s=>s.sent-s.shown*displayedScale),.5),p95:percentile(during.map(s=>s.sent-s.shown*displayedScale),.95)},
+    visualDelayMs:{median:percentile(displayedDelays,.5),p95:percentile(displayedDelays,.95)},
     frameIntervalMs:{median:percentile(intervals,.5),p95:percentile(intervals,.95)},
     paintIntervalMs:{median:percentile(paintIntervals,.5),p95:percentile(paintIntervals,.95)},
     wheelQueueMs:{median:percentile(result.input.map(x=>x.start-x.queued),.5),p95:percentile(result.input.map(x=>x.start-x.queued),.95)},
