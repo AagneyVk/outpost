@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Gecko } from '../../public/gecko-lab/engine/gecko-input-v5.js';
+import { Gecko } from '../../public/gecko-lab/engine/gecko-input-v6.js';
 
 test('paint accepts a valid WebAssembly buffer above the signed 2 GiB boundary', () => {
   const wordArray=globalThis.Uint32Array;

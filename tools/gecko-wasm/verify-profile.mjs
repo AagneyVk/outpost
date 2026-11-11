@@ -69,7 +69,7 @@ try {
     await original.route('**/gecko-lab/start.mjs', async route => {
       const response = await route.fetch();
       const source = (await response.text())
-        .replace('gecko-input-v5.js', 'gecko-input-v3.js')
+        .replace('gecko-input-v6.js', 'gecko-input-v3.js')
         .replace('gecko-input-v4.wasm.zst', 'gecko-input-v2.wasm.zst')
         .replace('    nativeZoom = true;', '    nativeZoom = false;');
       await route.fulfill({ response, body: source });
@@ -184,10 +184,8 @@ try {
   await page.locator('#profile-passphrase').fill(secret);
   await page.locator('#import-profile').click();
   await page.getByText('Profile restored. Start the browser to use it.').waitFor();
-  if (customRelay) {
-    await page.getByText('Network settings', { exact: true }).click();
-    await page.getByLabel('Custom Wisp endpoint').fill(customRelay);
-  }
+  await page.getByText('Network settings', { exact: true }).click();
+  await page.getByLabel('Custom Wisp endpoint').fill(customRelay ?? '');
   await page.locator('#start').click();
   await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
   assert.equal(await page.locator('#zoom-reset').textContent(), '150%');
@@ -203,10 +201,8 @@ try {
   await page.getByRole('button', { name: 'Clear browsing history' }).click();
   await page.locator('#history-list li').first().waitFor({ state: 'detached' });
   await page.reload();
-  if (customRelay) {
-    await page.getByText('Network settings', { exact: true }).click();
-    await page.getByLabel('Custom Wisp endpoint').fill(customRelay);
-  }
+  await page.getByText('Network settings', { exact: true }).click();
+  await page.getByLabel('Custom Wisp endpoint').fill(customRelay ?? '');
   await page.locator('#start').click();
   await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
   await page.getByRole('button', { name: 'History', exact: true }).click();
