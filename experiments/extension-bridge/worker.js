@@ -1,7 +1,9 @@
 // Isolated test fixture: loopback, same-origin and synthetic cookies only.
 // This is not a general extension, security boundary, or production transport.
 const RULE = 1001;
+const MAX_PENDING_REQUESTS = 16;
 let active = null;
+let pendingRequests = 0;
 // Session rules can outlive a service-worker restart. Remove this fixture's
 // rule before accepting the next request as well as in each request's cleanup.
 let queue = chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [RULE] });
@@ -94,8 +96,7 @@ async function readLimited(response) {
   return new TextDecoder().decode(bytes);
 }
 
-async function perform(message, sender) {
-  const url = validate(message, sender);
+async function perform(message, sender, url) {
   // Drop any stale fixture rule before starting; all operations use one queue.
   await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [RULE],
     addRules: message.cookie ? [ruleFor(url, message.cookie)] : [] });
@@ -109,7 +110,14 @@ async function perform(message, sender) {
     const event = active.events.at(-1);
     if (!event) throw Error('missing response metadata');
     let body = '';
-    if (r.type !== 'opaqueredirect') {
+    if (r.type === 'opaqueredirect') {
+      const locations = event.headers.filter(header => header.name === 'location');
+      if (locations.length !== 1) throw Error('fixture redirect must have one location');
+      const destination = new URL(locations[0].value, url);
+      if (destination.origin !== new URL(url).origin)
+        throw Error('cross-origin fixture redirect rejected');
+      validate({ url: destination.href, method: 'GET' }, sender);
+    } else {
       body = await readLimited(r);
     }
     return { ok: true, status: event.status, headers: event.headers, body, security: active.securityById.get(event.id) || null };
@@ -126,7 +134,16 @@ async function perform(message, sender) {
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== 'fixture-request') return;
-  const task = queue.then(() => perform(message, sender));
+  let url;
+  try {
+    url = validate(message, sender);
+    if (pendingRequests >= MAX_PENDING_REQUESTS) throw Error('fixture request queue full');
+  } catch (error) {
+    sendResponse({ ok: false, error: error.message });
+    return;
+  }
+  pendingRequests++;
+  const task = queue.then(() => perform(message, sender, url)).finally(() => { pendingRequests--; });
   queue = task.catch(() => {});
   task.then(sendResponse, error => sendResponse({ ok: false, error: String(error.message || error) }));
   return true;

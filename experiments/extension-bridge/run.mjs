@@ -22,6 +22,10 @@ const server = http.createServer((req, res) => {
         'Set-Cookie': 'workspace_session=' + body + '; HttpOnly; Path=/; SameSite=Lax' }).end();
     });
   } else if (u.pathname === '/account' || u.pathname === '/slow') {
+    if (u.searchParams.has('redirect')) {
+      res.writeHead(302, { Location: 'https://example.com/' }).end();
+      return;
+    }
     const received = req.headers.cookie || '';
     seen.push(received);
     if (u.pathname === '/slow' && u.searchParams.has('large')) {
@@ -69,12 +73,14 @@ try {
       request('/slow', { cookie: 'workspace_session=' + (i % 2 ? 'beta' : 'alpha') })
     ));
     const oversized = await request('/slow?large=1');
+    const escapedRedirect = await request('/slow?redirect=1');
+    const burst = await Promise.all(Array.from({ length: 32 }, () => request('/slow')));
     const withoutCookie = await request('/account');
     const rejectedTarget = await chrome.runtime.sendMessage(id, {
       type: 'fixture-request', url: 'https://example.net/', method: 'GET'
     });
     const rejectedCookie = await request('/account', { cookie: 'host_canary=must-not-leak' });
-    return { login, account, parallel, oversized, withoutCookie, rejectedTarget, rejectedCookie };
+    return { login, account, parallel, oversized, escapedRedirect, burst, withoutCookie, rejectedTarget, rejectedCookie };
   }, { id, origin });
   assert.equal(result.login.status, 302);
   assert.equal(result.login.body, '');
@@ -85,6 +91,10 @@ try {
   assert.equal(result.withoutCookie.status, 401);
   assert.equal(result.oversized.ok, false);
   assert.match(result.oversized.error, /fixture response too large/);
+  assert.equal(result.escapedRedirect.ok, false);
+  assert.match(result.escapedRedirect.error, /cross-origin fixture redirect rejected/);
+  assert.ok(result.burst.some(item => item.error === 'fixture request queue full'));
+  assert.ok(result.burst.some(item => item.status === 401));
   assert.equal(result.rejectedTarget.ok, false);
   assert.equal(result.rejectedCookie.ok, false);
   assert.equal(seen.some(cookie => cookie.includes('host_canary')), false);
