@@ -25,16 +25,18 @@
     const extension = new URL(location.href).searchParams.get('extension');
     const testProvider = extension ? {
       async stat(path) {
-        return /^outpost-fixture-(denied|allowed|login|account-with-cookie|account-without-cookie)$/.test(path)
+        return /^outpost-fixture-(denied|allowed|login|example|example-script|account-with-cookie|account-without-cookie)$/.test(path)
           ? { size: 4096, isDir: false } : null;
       },
       async readdir() { return []; },
       async readFile(path) {
-        if (!/^outpost-fixture-(denied|allowed|login|account-with-cookie|account-without-cookie)$/.test(path))
+        if (!/^outpost-fixture-(denied|allowed|login|example|example-script|account-with-cookie|account-without-cookie)$/.test(path))
           throw Error('unexpected fixture provider path');
         const kind = path.slice('outpost-fixture-'.length);
         let url, method, body, cookie;
-        if (kind === 'login') { url = '/login'; method = 'POST'; body = 'alpha'; }
+        if (kind === 'example') { url = 'https://example.com/'; method = 'GET'; }
+        else if (kind === 'example-script') { url = 'https://example.com/s.js'; method = 'GET'; }
+        else if (kind === 'login') { url = '/login'; method = 'POST'; body = 'alpha'; }
         else if (kind.startsWith('account-')) {
           url = '/account'; method = 'GET';
           if (kind === 'account-with-cookie') cookie = 'workspace_session=alpha';
@@ -43,13 +45,13 @@
         }
         const response = await Promise.race([
           chrome.runtime.sendMessage(extension, {
-            type: 'fixture-request', url: location.origin + url, method, body, cookie
+            type: 'fixture-request', url: url.startsWith('https:') ? url : location.origin + url, method, body, cookie
           }),
           new Promise((_, reject) => setTimeout(() => reject(Error('fixture extension timed out')), 10000))
         ]);
-        if (!response?.ok || ![200, 302, 401].includes(response.status)) throw Error('fixture extension request failed');
+        if (!response?.ok || ![200, 302, 401, 404].includes(response.status)) throw Error('fixture extension request failed');
         const header = name => response.headers.find(h => h.name === name)?.value || '';
-        const wire = [String(response.status), header('location'), header('set-cookie'), response.body].join('\n');
+        const wire = [String(response.status), header('location'), header('set-cookie'), header('content-type'), response.body].join('\n');
         const bytes = new TextEncoder().encode(wire);
         if (bytes.length >= 4096) throw Error('fixture response too large');
         const padded = new Uint8Array(4096);

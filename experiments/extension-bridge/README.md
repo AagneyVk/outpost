@@ -2,9 +2,10 @@
 
 This is a **local research fixture**, not an installable OUTPOST extension or a
 relay replacement. It only accepts requests from a top-level page on
-`127.0.0.1` to a few fixed paths on that same origin, and only accepts two
-synthetic cookie values. It cannot browse real sites. Do not install it into a
-normal browser profile or use it with real credentials.
+`127.0.0.1` to fixed paths on that same origin, plus anonymous GETs to
+`example.com` and two badssl certificate test hosts. It only accepts two
+synthetic cookie values. It cannot browse arbitrary sites. Do not install it
+into a normal browser profile or use it with real credentials.
 
 The experiment investigates whether a Gecko HTTP channel can hand requests to a
 Chrome extension after Gecko has enforced a CORS preflight, and whether Gecko can
@@ -28,7 +29,7 @@ only for those disposable profiles.
 
 The test checks a synthetic login and redirect, cookie isolation, simultaneous
 callers, oversized-response rejection, rejected frame access, and transfer of a
-test cookie to a second fresh profile. It does not use a real login or website.
+test cookie to a second fresh profile. It does not use a real login.
 
 ## Gecko experiment
 
@@ -46,6 +47,20 @@ cross-origin POST through the extension after preflight. It received a local
 HTTP response through the extension and followed a synthetic login redirect.
 The test copied Gecko profile files to a fresh browser profile and restored the
 test login. It did **not** test OUTPOST's encrypted export/import.
+
+A separate opt-in test (`run-gecko-fixture.mjs --ordered --https`) fetched
+`example.com` through the extension and loaded its response inside Gecko.
+Chrome rejected the expired and self-signed badssl test certificates. In the
+tested Gecko build, the resulting HTTPS channel had **no transport security
+information**, although the document reported a secure context. This is a
+release blocker: the experiment does not yet preserve Gecko's certificate state
+or security UI. HSTS and other security behavior must also be verified.
+
+For research only, adding `--security-info` starts the temporary test Chrome
+with the experimental `WebRequestSecurityInfo` feature flag. The tested Chrome
+then exposed certificate metadata to the extension. Without the flag, it did
+not; the flag is not an acceptable production requirement for ordinary users,
+and this experiment does not transfer that metadata into Gecko.
 
 The first response-override approach skipped preflight and lost redirect cookies.
 The lab patches change that behavior for the test; they are not suitable for

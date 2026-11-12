@@ -6,6 +6,14 @@ source = Path('/build/gecko.js/src/embed-browser.cpp')
 hook = Path('/lab/gecko-fixture-hook.cpp').read_text()
 if os.environ.get('OUTPOST_ORDERED_FIXTURE') == '1':
     hook = hook.replace('http-on-before-connect', 'outpost-fixture-after-preflight')
+    old_hosts = '''  if (!StringBeginsWith(spec, "http://fixture.test/"_ns) &&
+      !StringBeginsWith(spec, "http://foreign.test/"_ns)) return NS_OK;'''
+    new_hosts = '''  if (!StringBeginsWith(spec, "http://fixture.test/"_ns) &&
+      !StringBeginsWith(spec, "http://foreign.test/"_ns) &&
+      !spec.EqualsLiteral("https://example.com/") &&
+      !spec.EqualsLiteral("https://example.com/s.js")) return NS_OK;'''
+    assert hook.count(old_hosts) == 1
+    hook = hook.replace(old_hosts, new_hosts, 1)
     wire = Path('/lab/gecko-fixture-wire.cpp').read_text()
     hook = hook.replace('#include <stdio.h>\n', '#include <stdio.h>\n#include <stdlib.h>\n' + wire, 1)
     anchor = '''    if (method.EqualsLiteral("POST")) {
@@ -23,7 +31,13 @@ if os.environ.get('OUTPOST_ORDERED_FIXTURE') == '1':
     assert hook.count(anchor) == 1
     hook = hook.replace(anchor, '    if (!method.EqualsLiteral("POST")) response->SetResponseBody("fixture-cors"_ns);', 1)
     anchor = '  } else if (spec.EqualsLiteral("http://fixture.test/login")) {'
-    replacement = '''  } else if (spec.EqualsLiteral("http://fixture.test/bridge-login")) {
+    replacement = '''  } else if (spec.EqualsLiteral("https://example.com/")) {
+    if (!OutpostFixtureFetch("/fixture-mount/outpost-fixture-example", response))
+      return NS_ERROR_FAILURE;
+  } else if (spec.EqualsLiteral("https://example.com/s.js")) {
+    if (!OutpostFixtureFetch("/fixture-mount/outpost-fixture-example-script", response))
+      return NS_ERROR_FAILURE;
+  } else if (spec.EqualsLiteral("http://fixture.test/bridge-login")) {
     if (!OutpostFixtureFetch("/fixture-mount/outpost-fixture-login", response))
       return NS_ERROR_FAILURE;
   } else if (spec.EqualsLiteral("http://fixture.test/account")) {
@@ -69,6 +83,14 @@ commands = '''  if (aScript.EqualsLiteral("outpost:fixture-install")) {
   }
   if (aScript.EqualsLiteral("outpost:fixture-order")) {
     if (aOutResult) *aOutResult = strdup(gFixtureRequestOrder.get());
+    return true;
+  }
+  if (aScript.EqualsLiteral("outpost:fixture-security-info")) {
+    nsCOMPtr<nsITransportSecurityInfo> info;
+    nsresult rv = gFixtureHttpsChannel
+        ? gFixtureHttpsChannel->GetSecurityInfo(getter_AddRefs(info))
+        : NS_ERROR_NOT_AVAILABLE;
+    if (aOutResult) *aOutResult = strdup(NS_FAILED(rv) ? "unavailable" : info ? "present" : "absent");
     return true;
   }
 '''

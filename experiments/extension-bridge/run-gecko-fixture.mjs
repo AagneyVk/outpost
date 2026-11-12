@@ -9,6 +9,8 @@ import { chromium } from 'playwright-core';
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const patched = process.argv.includes('--patched');
 const ordered = process.argv.includes('--ordered');
+const testHttps = process.argv.includes('--https');
+const securityInfoFlag = process.argv.includes('--security-info');
 const build = path.join(dir, ordered ? 'build-ordered' : patched ? 'build-patched' : 'build');
 const egressCases = [];
 const routes = new Map([
@@ -71,7 +73,8 @@ try {
     context = await chromium.launchPersistentContext(profile, {
       ...(process.env.OUTPOST_CHROME ? { executablePath: process.env.OUTPOST_CHROME } : { channel: 'chrome' }),
       headless: true, ignoreDefaultArgs: ['--disable-extensions'],
-      args: ['--enable-unsafe-extension-debugging']
+      args: ['--enable-unsafe-extension-debugging',
+        ...(securityInfoFlag ? ['--enable-features=WebRequestSecurityInfo'] : [])]
     });
     const cdp = await context.browser().newBrowserCDPSession();
     ({ id: extension } = await cdp.send('Extensions.loadUnpacked', { path: dir }));
@@ -113,6 +116,7 @@ try {
   const cookieResult = JSON.parse(cookieResultText);
   let bridgeLogin = null;
   let restoredLogin = null;
+  let httpsEvidence = null;
   assert.match(cookieControl, /control=present/);
   assert.equal(cookieResult.href, 'http://fixture.test/home');
   assert.match(cookieResult.cookie, /control=present/);
@@ -133,6 +137,38 @@ try {
     ]);
     const hostCookies = await context.cookies(origin);
     assert.deepEqual(hostCookies.map(c => c.name), ['host_canary']);
+
+    if (testHttps) {
+      const external = await page.evaluate(async extension => {
+        const run = url => chrome.runtime.sendMessage(extension, {
+          type: 'fixture-request', url, method: 'GET'
+        });
+        return {
+          valid: await run('https://example.com/'),
+          expired: await run('https://expired.badssl.com/'),
+          selfSigned: await run('https://self-signed.badssl.com/')
+        };
+      }, extension);
+      assert.equal(external.valid.status, 200);
+      assert.match(external.valid.body, /Example Domain/);
+      assert.equal(external.expired.ok, false);
+      assert.equal(external.selfSigned.ok, false);
+      assert.match(external.expired.networkError || '', /^net::ERR_CERT_/,
+        'expired certificate must fail with a verified certificate error');
+      assert.match(external.selfSigned.networkError || '', /^net::ERR_CERT_/,
+        'self-signed certificate must fail with a verified certificate error');
+      await timed(page.evaluate(() => gecko.load('https://example.com/')), 30000, 'HTTPS navigation');
+      const siteText = await page.evaluate(() => gecko.evalChrome(
+        "JSON.stringify({href:location.href,title:document.title,secureContext:window.isSecureContext,body:document.body?.innerText?.slice(0,250)})"));
+      const site = JSON.parse(siteText);
+      assert.equal(site.href, 'https://example.com/');
+      assert.equal(site.title, 'Example Domain');
+      const channelSecurityInfo = await page.evaluate(() => gecko.evalChrome('outpost:fixture-security-info'));
+      assert.equal(channelSecurityInfo, 'absent',
+        'fixture security state changed; reassess the recorded release blocker');
+      httpsEvidence = { validStatus: external.valid.status, hostSecurity: external.valid.security, expired: external.expired,
+        selfSigned: external.selfSigned, gecko: site, channelSecurityInfo };
+    }
 
     // The profile contains test data only. Copy its OPFS files to a separate
     // throwaway Chrome profile to test the Gecko cookie store itself. This is
@@ -166,7 +202,8 @@ try {
     context = await chromium.launchPersistentContext(secondProfile, {
       ...(process.env.OUTPOST_CHROME ? { executablePath: process.env.OUTPOST_CHROME } : { channel: 'chrome' }),
       headless: true, ignoreDefaultArgs: ['--disable-extensions'],
-      args: ['--enable-unsafe-extension-debugging']
+      args: ['--enable-unsafe-extension-debugging',
+        ...(securityInfoFlag ? ['--enable-features=WebRequestSecurityInfo'] : [])]
     });
     const cdp = await context.browser().newBrowserCDPSession();
     const restoredExtension = (await cdp.send('Extensions.loadUnpacked', { path: dir })).id;
@@ -196,7 +233,7 @@ try {
   }
   console.log(JSON.stringify({ build: ordered ? 'ordered fixture' : patched ? 'patched fixture' : 'baseline fixture',
     installed, corsTitle: title, preflightAndPostCounts: stats, observerOrder: order,
-    egressCases, bridgeLogin, restoredLogin, cookieControl,
+    egressCases, bridgeLogin, restoredLogin, httpsEvidence, cookieControl,
     redirectResult: cookieResult }, null, 2));
 } finally {
   if (context) await context.close();

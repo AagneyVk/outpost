@@ -71,7 +71,7 @@ try {
     const oversized = await request('/slow?large=1');
     const withoutCookie = await request('/account');
     const rejectedTarget = await chrome.runtime.sendMessage(id, {
-      type: 'fixture-request', url: 'https://example.com/', method: 'GET'
+      type: 'fixture-request', url: 'https://example.net/', method: 'GET'
     });
     const rejectedCookie = await request('/account', { cookie: 'host_canary=must-not-leak' });
     return { login, account, parallel, oversized, withoutCookie, rejectedTarget, rejectedCookie };
