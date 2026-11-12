@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "OUTPOST certificate debugger feasibility test",
+  "version": "0.0.1",
+  "permissions": ["debugger", "tabs"],
+  "host_permissions": ["https://example.com/*", "https://expired.badssl.com/*"]
+}

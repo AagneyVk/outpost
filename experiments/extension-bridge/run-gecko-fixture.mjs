@@ -13,6 +13,7 @@ const testHttps = process.argv.includes('--https');
 const securityInfoFlag = process.argv.includes('--security-info');
 const build = path.join(dir, ordered ? 'build-ordered' : patched ? 'build-patched' : 'build');
 const egressCases = [];
+let relayConnectionAttempts = 0;
 const routes = new Map([
   ['/', [path.join(dir, 'gecko-fixture.html'), 'text/html']],
   ['/engine/gecko.js', [path.join(build, 'gecko.js'), 'text/javascript']],
@@ -53,6 +54,10 @@ const server = http.createServer(async (req, res) => {
       'cross-origin-embedder-policy': 'require-corp', 'cache-control': 'no-store' });
     res.end(content);
   } catch (error) { res.writeHead(500).end(String(error)); }
+});
+server.on('upgrade', (req, socket) => {
+  if (req.url === '/wisp/') relayConnectionAttempts++;
+  socket.destroy();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const timed = (operation, ms, label) => {
@@ -153,10 +158,8 @@ try {
       assert.match(external.valid.body, /Example Domain/);
       assert.equal(external.expired.ok, false);
       assert.equal(external.selfSigned.ok, false);
-      assert.match(external.expired.networkError || '', /^net::ERR_CERT_/,
-        'expired certificate must fail with a verified certificate error');
-      assert.match(external.selfSigned.networkError || '', /^net::ERR_CERT_/,
-        'self-signed certificate must fail with a verified certificate error');
+      assert.match(external.expired.networkError || '', /^net::ERR_CERT_/);
+      assert.match(external.selfSigned.networkError || '', /^net::ERR_CERT_/);
       await timed(page.evaluate(() => gecko.load('https://example.com/')), 30000, 'HTTPS navigation');
       const siteText = await page.evaluate(() => gecko.evalChrome(
         "JSON.stringify({href:location.href,title:document.title,secureContext:window.isSecureContext,body:document.body?.innerText?.slice(0,250)})"));
@@ -164,10 +167,32 @@ try {
       assert.equal(site.href, 'https://example.com/');
       assert.equal(site.title, 'Example Domain');
       const channelSecurityInfo = await page.evaluate(() => gecko.evalChrome('outpost:fixture-security-info'));
-      assert.equal(channelSecurityInfo, 'absent',
-        'fixture security state changed; reassess the recorded release blocker');
+      assert.equal(channelSecurityInfo, 'absent', 'fixture security state changed; reassess the release blocker');
+      // Verify the local relay probe sees connections before using it to assert
+      // that the failed certificate requests cannot fall back to the relay.
+      const initialAttempts = relayConnectionAttempts;
+      await page.evaluate(url => new Promise(resolve => {
+        const socket = new WebSocket(url);
+        socket.onerror = socket.onclose = () => resolve();
+      }), origin.replace(/^http:/, 'ws:') + '/wisp/');
+      assert.equal(relayConnectionAttempts, initialAttempts + 1, 'relay probe calibration failed');
+      const beforeBadCertificates = relayConnectionAttempts;
+      await timed(page.evaluate(() => gecko.load('https://expired.badssl.com/')), 30000, 'expired-certificate navigation');
+      const expiredNavigationStatus = await page.evaluate(() => gecko.evalChrome('outpost:fixture-nav-status'));
+      await timed(page.evaluate(() => gecko.load('https://self-signed.badssl.com/')), 30000, 'self-signed navigation');
+      const selfSignedNavigationStatus = await page.evaluate(() => gecko.evalChrome('outpost:fixture-nav-status'));
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const bridgeFailures = await page.evaluate(() => window.fixtureTransportFailures || []);
+      assert.deepEqual(bridgeFailures.map(f => f.kind), ['expired', 'self-signed']);
+      assert.match(bridgeFailures[0].networkError || '', /^net::ERR_CERT_/);
+      assert.match(bridgeFailures[1].networkError || '', /^net::ERR_CERT_/);
+      assert.equal(expiredNavigationStatus, 'failed');
+      assert.equal(selfSignedNavigationStatus, 'failed');
+      assert.equal(relayConnectionAttempts, beforeBadCertificates, 'invalid certificate fell back to relay');
       httpsEvidence = { validStatus: external.valid.status, hostSecurity: external.valid.security, expired: external.expired,
-        selfSigned: external.selfSigned, gecko: site, channelSecurityInfo };
+        selfSigned: external.selfSigned, gecko: site, channelSecurityInfo,
+        badCertificateNavigations: bridgeFailures, expiredNavigationStatus, selfSignedNavigationStatus,
+        relayFallbackAttempts: relayConnectionAttempts - beforeBadCertificates };
     }
 
     // The profile contains test data only. Copy its OPFS files to a separate

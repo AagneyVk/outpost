@@ -21,4 +21,5 @@ experiments/extension-bridge/build-ordered/
 experiments/extension-bridge/temporary-profile-*/
 experiments/extension-bridge/gecko-fixture-profile-*/
 experiments/extension-bridge/gecko-fixture-restore-profile-*/
+experiments/extension-certificate-probe/temporary-profile-*/
 pages-dist/

@@ -11,6 +11,8 @@ static uint32_t gFixturePreflights = 0;
 static uint32_t gFixtureCorsPosts = 0;
 static nsCString gFixtureRequestOrder;
 static nsCOMPtr<nsIChannel> gFixtureHttpsChannel;
+static bool gFixtureNavigationFailed = false;
+static nsCString gFixtureNavigationUrl;
 
 class OutpostFixtureObserver final : public nsIObserver {
  public:

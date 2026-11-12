@@ -56,11 +56,20 @@ information**, although the document reported a secure context. This is a
 release blocker: the experiment does not yet preserve Gecko's certificate state
 or security UI. HSTS and other security behavior must also be verified.
 
+The test-only engine explicitly cancels the two rejected HTTPS navigations,
+returns control after the failures, and checks a calibrated local relay probe
+for fallback connections. Both certificate tests failed and the probe saw no
+fallback. This applies to the fixture URLs only and is not a general production
+error-handling implementation.
+
 For research only, adding `--security-info` starts the temporary test Chrome
 with the experimental `WebRequestSecurityInfo` feature flag. The tested Chrome
 then exposed certificate metadata to the extension. Without the flag, it did
 not; the flag is not an acceptable production requirement for ordinary users,
 and this experiment does not transfer that metadata into Gecko.
+A separate [debugger API feasibility probe](../extension-certificate-probe/)
+can retrieve connection metadata without that feature flag, but requires the
+powerful `debugger` permission and has not been integrated into Gecko.
 
 The first response-override approach skipped preflight and lost redirect cookies.
 The lab patches change that behavior for the test; they are not suitable for
