@@ -14,6 +14,8 @@ A browser that runs inside your browser, with encrypted profiles you can export,
 
 OUTPOST runs a WebAssembly build of Gecko in a browser tab. You can browse in a separate profile, export your open tabs and website sessions with a passphrase, clear the local Gecko profile, and import the archive in a fresh browser. The demo requires no OUTPOST account or installation.
 
+An [experimental extension bridge](experiments/extension-bridge/README.md) tests a possible alternative network path using synthetic local sites. It is research code and does not yet replace the relay or browse real websites.
+
 | Feature | GitHub Pages | Local checkout |
 | --- | --- | --- |
 | Gecko browsing with tabs, history, and zoom | Yes | Yes |
