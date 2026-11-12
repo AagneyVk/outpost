@@ -21,6 +21,8 @@ try {
   console.log(JSON.stringify({ browser: context.browser().version(), result }, null, 2));
   assert.equal(result.valid, 200);
   assert.equal(result.expired, 'TypeError');
+  assert.equal(result.expiredFailedWithoutResponse, true);
+  assert.equal(result.bodyMatched, true);
   assert.ok(result.events.some(event => event.securityState === 'secure'));
   assert.ok(result.certificateCount > 0);
 } finally {

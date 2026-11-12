@@ -21,3 +21,8 @@ notification. It is not requested by OUTPOST's current extension fixture, and
 this experiment does not establish that it is appropriate for production.
 Reported certificates and issuers reflect the host browser's trust and network
 configuration; trusted HTTPS interception can change the observed chain.
+
+The probe matches Chrome's security details and captured response body using
+the same network request ID. It also checks that an expired certificate causes
+a network failure before any response arrives. The separate certificate chain
+lookup is keyed by origin, so the probe does not use it as request-bound proof.
