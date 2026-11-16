@@ -3,7 +3,7 @@ globalThis.runCertificateProbe = async () => {
   const tab = await chrome.tabs.getCurrent();
   const target = { tabId: tab.id };
   const responses = new Map();
-  const failures = new Set();
+  const failures = new Map();
   const requests = new Map();
   const listener = (source, method, params) => {
     if (source.tabId !== tab.id) return;
@@ -11,7 +11,7 @@ globalThis.runCertificateProbe = async () => {
       requests.set(params.requestId, params.request.url);
     if (method === 'Network.responseReceived')
       responses.set(params.requestId, params.response);
-    if (method === 'Network.loadingFailed') failures.add(params.requestId);
+    if (method === 'Network.loadingFailed') failures.set(params.requestId, params.errorText);
   };
   chrome.debugger.onEvent.addListener(listener);
   let attached = false;
@@ -46,8 +46,10 @@ globalThis.runCertificateProbe = async () => {
     for (let i = 0; i < 40 && ![...requests].some(([id, requestUrl]) =>
       requestUrl === expiredUrl && failures.has(id)); i++)
       await new Promise(resolve => setTimeout(resolve, 25));
-    const expiredFailedWithoutResponse = [...requests].some(([id, requestUrl]) =>
+    const expiredFailures = [...requests].filter(([id, requestUrl]) =>
       requestUrl === expiredUrl && failures.has(id) && !responses.has(id));
+    const expiredFailedWithoutResponse = expiredFailures.length === 1 &&
+      failures.get(expiredFailures[0][0]) === 'net::ERR_CERT_DATE_INVALID';
     const cert = await chrome.debugger.sendCommand(target, 'Network.getCertificate', { origin: 'https://example.com' });
     return { valid: valid.status, expired: bad, expiredFailedWithoutResponse, bodyMatched: true,
       events: [{ protocol: security.protocol, issuer: security.issuer, securityState: response.securityState }],

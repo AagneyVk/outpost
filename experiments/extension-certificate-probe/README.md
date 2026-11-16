@@ -24,5 +24,5 @@ configuration; trusted HTTPS interception can change the observed chain.
 
 The probe matches Chrome's security details and captured response body using
 the same network request ID. It also checks that an expired certificate causes
-a network failure before any response arrives. The separate certificate chain
+a certificate-expiration failure before any response arrives. The separate certificate chain
 lookup is keyed by origin, so the probe does not use it as request-bound proof.
