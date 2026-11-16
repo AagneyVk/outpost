@@ -49,7 +49,10 @@ const websocketServer = new WebSocketServer({ noServer: true });
 server.on('upgrade', (request, socket, head) => {
   if (request.url !== '/socket') { socket.destroy(); return; }
   websocketServer.handleUpgrade(request, socket, head, ws => {
-    ws.on('message', data => ws.send(data.toString()));
+    ws.on('message', data => {
+      if (data.toString() === 'close') ws.close(1000, 'fixture close');
+      else ws.send(data.toString());
+    });
   });
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -91,6 +94,12 @@ try {
     const websocket = await chrome.runtime.sendMessage(id, {
       type: 'fixture-websocket', url: origin.replace('http:', 'ws:') + '/socket', data: 'echo'
     });
+    const websocketClosed = await chrome.runtime.sendMessage(id, {
+      type: 'fixture-websocket', url: origin.replace('http:', 'ws:') + '/socket', data: 'close'
+    });
+    const websocketReconnected = await chrome.runtime.sendMessage(id, {
+      type: 'fixture-websocket', url: origin.replace('http:', 'ws:') + '/socket', data: 'again'
+    });
     const rejectedWebsocket = await chrome.runtime.sendMessage(id, {
       type: 'fixture-websocket', url: 'wss://example.com/socket', data: 'echo'
     });
@@ -101,7 +110,7 @@ try {
       type: 'fixture-request', url: 'https://example.net/', method: 'GET'
     });
     const rejectedCookie = await request('/account', { cookie: 'host_canary=must-not-leak' });
-    return { login, account, parallel, oversized, upload, websocket, rejectedWebsocket, escapedRedirect, burst, withoutCookie, rejectedTarget, rejectedCookie };
+    return { login, account, parallel, oversized, upload, websocket, websocketClosed, websocketReconnected, rejectedWebsocket, escapedRedirect, burst, withoutCookie, rejectedTarget, rejectedCookie };
   }, { id, origin });
   assert.equal(result.login.status, 302);
   assert.equal(result.login.body, '');
@@ -114,6 +123,8 @@ try {
   assert.match(result.oversized.error, /fixture response too large/);
   assert.deepEqual(JSON.parse(result.upload.body), [0, 127, 128, 255]);
   assert.deepEqual(result.websocket, { ok: true, data: 'echo' });
+  assert.equal(result.websocketClosed.error, 'websocket closed before response');
+  assert.deepEqual(result.websocketReconnected, { ok: true, data: 'again' });
   assert.equal(result.rejectedWebsocket.ok, false);
   assert.equal(result.escapedRedirect.ok, false);
   assert.match(result.escapedRedirect.error, /cross-origin fixture redirect rejected/);
@@ -158,7 +169,8 @@ try {
     arbitraryTargetRejected: !result.rejectedTarget.ok, arbitraryCookieRejected: !result.rejectedCookie.ok,
     nestedFrameRejected: !frameRequest.ok,
     oversizedResponseRejected: !result.oversized.ok, binaryUploadPassed: true,
-    websocketEchoPassed: true, externalWebsocketRejected: true, missingCookieStatus: result.withoutCookie.status,
+    websocketEchoPassed: true, websocketCloseHandled: true, newConnectionPassed: true,
+    externalWebsocketRejected: true, missingCookieStatus: result.withoutCookie.status,
     restoredInFreshProfile: restored.status === 200 }, null, 2));
 } finally {
   if (context) await context.close();

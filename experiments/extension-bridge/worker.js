@@ -2,8 +2,10 @@
 // This is not a general extension, security boundary, or production transport.
 const RULE = 1001;
 const MAX_PENDING_REQUESTS = 16;
+const MAX_PENDING_WEBSOCKETS = 16;
 let active = null;
 let pendingRequests = 0;
+let pendingWebSockets = 0;
 // Session rules can outlive a service-worker restart. Remove this fixture's
 // rule before accepting the next request as well as in each request's cleanup.
 let queue = chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [RULE] });
@@ -148,15 +150,23 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
           target.pathname !== '/socket' || target.search || target.hash ||
           typeof message.data !== 'string' || message.data.length > 100)
         throw Error('fixture websocket rejected');
+      if (pendingWebSockets >= MAX_PENDING_WEBSOCKETS) throw Error('fixture websocket limit reached');
       const socket = new WebSocket(target.href);
-      const timer = setTimeout(() => { socket.close(); sendResponse({ ok: false, error: 'timeout' }); }, 5000);
-      socket.onopen = () => socket.send(message.data);
-      socket.onmessage = event => {
+      pendingWebSockets++;
+      let finished = false;
+      const finish = result => {
+        if (finished) return;
+        finished = true;
         clearTimeout(timer);
-        sendResponse({ ok: true, data: event.data });
+        pendingWebSockets--;
+        sendResponse(result);
         socket.close();
       };
-      socket.onerror = () => { clearTimeout(timer); sendResponse({ ok: false, error: 'websocket failed' }); };
+      const timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), 5000);
+      socket.onopen = () => socket.send(message.data);
+      socket.onmessage = event => finish({ ok: true, data: event.data });
+      socket.onerror = () => finish({ ok: false, error: 'websocket failed' });
+      socket.onclose = () => finish({ ok: false, error: 'websocket closed before response' });
       return true;
     } catch (error) {
       sendResponse({ ok: false, error: error.message });
