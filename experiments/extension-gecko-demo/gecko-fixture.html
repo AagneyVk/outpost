@@ -1,0 +1,113 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Isolated Gecko fixture</title>
+<canvas id="screen" width="800" height="600"></canvas>
+<script type="module">
+  import { Gecko } from '/engine/gecko.js';
+  window.failure = null;
+  window.ready = false;
+  try {
+    if (Array.isArray(window.__fixtureSeed)) {
+      const root = await navigator.storage.getDirectory();
+      const base = await root.getDirectoryHandle('outpost-fixture-profile', { create: true });
+      for (const entry of window.__fixtureSeed) {
+        let folder = base;
+        for (const name of entry.path.slice(0, -1)) folder = await folder.getDirectoryHandle(name, { create: true });
+        const binary = atob(entry.bytes);
+        const data = Uint8Array.from(binary, char => char.charCodeAt(0));
+        const handle = await folder.getFileHandle(entry.path.at(-1), { create: true });
+        const writer = await handle.createWritable();
+        await writer.write(data);
+        await writer.close();
+      }
+      delete window.__fixtureSeed;
+    }
+    const extension = new URL(location.href).searchParams.get('extension');
+    const validPath = path => /^outpost-fixture-(denied|allowed|login|example|example-script|expired|self-signed|account-with-cookie|account-without-cookie|demo-login|demo-auth-[A-Za-z0-9_~-]+|demo-secure-[A-Za-z0-9_~-]+)$/.test(path);
+    const testProvider = extension ? {
+      async stat(path) {
+        if (path.startsWith('outpost-fixture-demo-secure-'))
+          (window.demoTrace ||= []).push({ stage: 'secure-stat', length: path.length, accepted: validPath(path) });
+        return validPath(path) ? { size: 262144, isDir: false } : null;
+      },
+      async readdir() { return []; },
+      async readFile(path) {
+        if (!validPath(path))
+          throw Error('unexpected fixture provider path');
+        const kind = path.slice('outpost-fixture-'.length);
+        let url, method, body, cookie;
+        if (kind === 'example') { url = 'https://example.com/'; method = 'GET'; }
+        else if (kind === 'example-script') { url = 'https://example.com/s.js'; method = 'GET'; }
+        else if (kind === 'expired') { url = 'https://expired.badssl.com/'; method = 'GET'; }
+        else if (kind === 'self-signed') { url = 'https://self-signed.badssl.com/'; method = 'GET'; }
+        else if (kind === 'demo-login') { url = 'https://practice.expandtesting.com/login'; method = 'GET'; }
+        else if (kind.startsWith('demo-auth-')) {
+          url = 'https://practice.expandtesting.com/authenticate'; method = 'POST';
+          body = atob(kind.slice(10).replace(/_/g, '/').replace(/~/g, '+'));
+        } else if (kind.startsWith('demo-secure-')) {
+          url = 'https://practice.expandtesting.com/secure'; method = 'GET';
+          const encoded = kind.slice(12);
+          if (encoded !== '-') cookie = atob(encoded.replace(/_/g, '/').replace(/~/g, '+'));
+        }
+        else if (kind === 'login') { url = '/login'; method = 'POST'; body = 'alpha'; }
+        else if (kind.startsWith('account-')) {
+          url = '/account'; method = 'GET';
+          if (kind === 'account-with-cookie') cookie = 'workspace_session=alpha';
+        } else {
+          url = '/slow?case=' + kind; method = 'POST'; body = 'synthetic-side-effect';
+        }
+        const response = await Promise.race([
+          chrome.runtime.sendMessage(extension, {
+            type: 'fixture-request', url: url.startsWith('https:') ? url : location.origin + url, method, body, cookie
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(Error('fixture extension timed out')), 10000))
+        ]);
+        if (kind.startsWith('demo-')) {
+          (window.demoTrace ||= []).push({
+            stage: kind.startsWith('demo-auth-') ? 'auth' : kind.startsWith('demo-secure-') ? 'secure' : 'login',
+            status: response?.status || null, ok: !!response?.ok,
+            error: response?.error || null, cookieLength: cookie?.length || 0,
+            cookieHeaders: (response?.headers || []).filter(h => h.name === 'set-cookie')
+              .map(h => ({ name: h.value.split('=', 1)[0], length: h.value.split(';', 1)[0].length,
+                hasExpiry: /(?:^|;)\s*(?:expires|max-age)\s*=/i.test(h.value) }))
+          });
+        }
+        if (!response?.ok || ![200, 302, 401, 404].includes(response.status)) {
+          (window.fixtureTransportFailures ||= []).push({ kind, networkError: response?.networkError || null });
+          throw Error('fixture extension request failed');
+        }
+        // This experiment deliberately suppresses the public demo's third-party
+        // scripts, fonts, images and styles. Its real HTML form and responses
+        // still travel through the bridge; it is not a full-site rendering test.
+        if (response.status === 200 && (kind === 'demo-login' || kind.startsWith('demo-secure-'))) {
+          const original = response.body;
+          response.body = original.replace(/<head(?:\s[^>]*)?>/i,
+            "$&<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'\">");
+          if (response.body === original) throw Error('demo page lacks head');
+        }
+        const header = name => response.headers.find(h => h.name === name)?.value || '';
+        const cookies = response.headers.filter(h => h.name === 'set-cookie').map(h => h.value);
+        if (cookies.length > 2) throw Error('too many fixture cookies');
+        const wire = [String(response.status), header('location'), cookies[0] || '', cookies[1] || '', header('content-type'), response.body].join('\n');
+        const bytes = new TextEncoder().encode(wire);
+        if (bytes.length >= 262144) throw Error('fixture response too large');
+        const padded = new Uint8Array(262144);
+        padded.set(bytes);
+        return padded;
+      }
+    } : undefined;
+    window.gecko = new Gecko({
+      canvas: document.querySelector('#screen'),
+      width: 800, height: 600,
+      wispUrl: location.origin.replace(/^http:/, 'ws:') + '/wisp/',
+      wasm: { url: '/engine/gecko.wasm.zst', compressed: true },
+      profile: 'outpost-fixture-profile',
+      fs: testProvider,
+      env: { GECKO_NOWASMJIT: '1', ...(extension ? { GRE_DIR: '/gre-baked' } : {}) },
+      print: msg => console.log('[GECKO]', msg),
+      printErr: msg => console.log('[GECKO-ERR]', msg)
+    });
+    await gecko.init();
+    window.ready = true;
+  } catch (error) { window.failure = String(error.stack || error); }
+</script>
