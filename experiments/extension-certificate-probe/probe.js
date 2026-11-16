@@ -31,15 +31,13 @@ globalThis.runCertificateProbe = async () => {
       requests.get(id) === url && response.url === url);
     if (matches.length !== 1) throw Error('Expected exactly one matching network response');
     const [[requestId, response]] = matches;
-    if (response.status !== valid.status || response.securityState !== 'secure' ||
-        !response.securityDetails || response.fromDiskCache || response.fromServiceWorker)
-      throw Error('The network response lacked verified connection metadata');
     const captured = await chrome.debugger.sendCommand(target, 'Network.getResponseBody', { requestId });
     const capturedBody = captured.base64Encoded
       ? new TextDecoder().decode(Uint8Array.from(atob(captured.body), char => char.charCodeAt(0)))
       : captured.body;
-    if (capturedBody !== body) throw Error('Response body did not match the request with connection metadata');
-    const security = response.securityDetails;
+    const { security } = globalThis.validateResponseBinding({
+      url, status: valid.status, body, requests, responses, failures, capturedBody
+    });
     let bad;
     try { await fetch(expiredUrl, options); bad = 'unexpected success'; }
     catch (error) { bad = error.name; }
