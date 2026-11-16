@@ -56,8 +56,12 @@ function validate(message, sender) {
     throw Error('fixture origin or path rejected');
   }
   if (!['GET', 'POST'].includes(message.method)) throw Error('method rejected');
-  if (message.body !== undefined && (typeof message.body !== 'string' || message.body.length > 100))
-    throw Error('body rejected');
+  if (message.body !== undefined) {
+    const validText = typeof message.body === 'string' && message.body.length <= 100;
+    const validBytes = Array.isArray(message.body) && message.body.length <= 4096 &&
+      message.body.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255);
+    if (!validText && !validBytes) throw Error('body rejected');
+  }
   if (message.cookie !== undefined && !/^workspace_session=(alpha|beta)$/.test(message.cookie))
     throw Error('only test cookies allowed');
   return url.href;
@@ -104,12 +108,13 @@ async function perform(message, sender, url) {
   const networkErrorPromise = new Promise(resolve => { resolveNetworkError = resolve; });
   active = { url, events: [], securityById: new Map(), resolveNetworkError };
   try {
-    const r = await fetch(url, { method: message.method, body: message.body,
+    const body = Array.isArray(message.body) ? new Uint8Array(message.body) : message.body;
+    const r = await fetch(url, { method: message.method, body,
       credentials: 'omit', cache: 'no-store', redirect: 'manual',
       signal: AbortSignal.timeout(10000) });
     const event = active.events.at(-1);
     if (!event) throw Error('missing response metadata');
-    let body = '';
+    let responseBody = '';
     if (r.type === 'opaqueredirect') {
       const locations = event.headers.filter(header => header.name === 'location');
       if (locations.length !== 1) throw Error('fixture redirect must have one location');
@@ -118,9 +123,9 @@ async function perform(message, sender, url) {
         throw Error('cross-origin fixture redirect rejected');
       validate({ url: destination.href, method: 'GET' }, sender);
     } else {
-      body = await readLimited(r);
+      responseBody = await readLimited(r);
     }
-    return { ok: true, status: event.status, headers: event.headers, body, security: active.securityById.get(event.id) || null };
+    return { ok: true, status: event.status, headers: event.headers, body: responseBody, security: active.securityById.get(event.id) || null };
   } catch (error) {
     const networkError = active.networkError || await Promise.race([
       networkErrorPromise, new Promise(resolve => setTimeout(() => resolve(null), 1000))
@@ -133,6 +138,31 @@ async function perform(message, sender, url) {
 }
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'fixture-websocket') {
+    try {
+      if (!sender.tab || sender.frameId !== 0) throw Error('top-level page required');
+      const source = new URL(sender.url);
+      const target = new URL(message.url);
+      if (source.protocol !== 'http:' || source.hostname !== '127.0.0.1' ||
+          target.protocol !== 'ws:' || target.host !== source.host ||
+          target.pathname !== '/socket' || target.search || target.hash ||
+          typeof message.data !== 'string' || message.data.length > 100)
+        throw Error('fixture websocket rejected');
+      const socket = new WebSocket(target.href);
+      const timer = setTimeout(() => { socket.close(); sendResponse({ ok: false, error: 'timeout' }); }, 5000);
+      socket.onopen = () => socket.send(message.data);
+      socket.onmessage = event => {
+        clearTimeout(timer);
+        sendResponse({ ok: true, data: event.data });
+        socket.close();
+      };
+      socket.onerror = () => { clearTimeout(timer); sendResponse({ ok: false, error: 'websocket failed' }); };
+      return true;
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message });
+      return;
+    }
+  }
   if (!message || message.type !== 'fixture-request') return;
   let url;
   try {

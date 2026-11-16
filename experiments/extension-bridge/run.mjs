@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
+import { WebSocketServer } from 'ws';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const seen = [];
@@ -28,6 +29,12 @@ const server = http.createServer((req, res) => {
     }
     const received = req.headers.cookie || '';
     seen.push(received);
+    if (u.pathname === '/slow' && u.searchParams.has('upload')) {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => res.writeHead(200).end(JSON.stringify([...Buffer.concat(chunks)])));
+      return;
+    }
     if (u.pathname === '/slow' && u.searchParams.has('large')) {
       res.writeHead(200).end('x'.repeat(4097));
       return;
@@ -37,6 +44,13 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ cookie: received }));
     }, u.pathname === '/slow' ? 50 : 0);
   } else res.writeHead(404).end();
+});
+const websocketServer = new WebSocketServer({ noServer: true });
+server.on('upgrade', (request, socket, head) => {
+  if (request.url !== '/socket') { socket.destroy(); return; }
+  websocketServer.handleUpgrade(request, socket, head, ws => {
+    ws.on('message', data => ws.send(data.toString()));
+  });
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = 'http://127.0.0.1:' + server.address().port;
@@ -73,6 +87,13 @@ try {
       request('/slow', { cookie: 'workspace_session=' + (i % 2 ? 'beta' : 'alpha') })
     ));
     const oversized = await request('/slow?large=1');
+    const upload = await request('/slow?upload=1', { method: 'POST', body: [0, 127, 128, 255] });
+    const websocket = await chrome.runtime.sendMessage(id, {
+      type: 'fixture-websocket', url: origin.replace('http:', 'ws:') + '/socket', data: 'echo'
+    });
+    const rejectedWebsocket = await chrome.runtime.sendMessage(id, {
+      type: 'fixture-websocket', url: 'wss://example.com/socket', data: 'echo'
+    });
     const escapedRedirect = await request('/slow?redirect=1');
     const burst = await Promise.all(Array.from({ length: 32 }, () => request('/slow')));
     const withoutCookie = await request('/account');
@@ -80,7 +101,7 @@ try {
       type: 'fixture-request', url: 'https://example.net/', method: 'GET'
     });
     const rejectedCookie = await request('/account', { cookie: 'host_canary=must-not-leak' });
-    return { login, account, parallel, oversized, escapedRedirect, burst, withoutCookie, rejectedTarget, rejectedCookie };
+    return { login, account, parallel, oversized, upload, websocket, rejectedWebsocket, escapedRedirect, burst, withoutCookie, rejectedTarget, rejectedCookie };
   }, { id, origin });
   assert.equal(result.login.status, 302);
   assert.equal(result.login.body, '');
@@ -91,6 +112,9 @@ try {
   assert.equal(result.withoutCookie.status, 401);
   assert.equal(result.oversized.ok, false);
   assert.match(result.oversized.error, /fixture response too large/);
+  assert.deepEqual(JSON.parse(result.upload.body), [0, 127, 128, 255]);
+  assert.deepEqual(result.websocket, { ok: true, data: 'echo' });
+  assert.equal(result.rejectedWebsocket.ok, false);
   assert.equal(result.escapedRedirect.ok, false);
   assert.match(result.escapedRedirect.error, /cross-origin fixture redirect rejected/);
   assert.ok(result.burst.some(item => item.error === 'fixture request queue full'));
@@ -133,10 +157,12 @@ try {
     isolatedConcurrentCookies: true, hostCookieLeaked: false, guestCookieInHostJar: false,
     arbitraryTargetRejected: !result.rejectedTarget.ok, arbitraryCookieRejected: !result.rejectedCookie.ok,
     nestedFrameRejected: !frameRequest.ok,
-    oversizedResponseRejected: !result.oversized.ok, missingCookieStatus: result.withoutCookie.status,
+    oversizedResponseRejected: !result.oversized.ok, binaryUploadPassed: true,
+    websocketEchoPassed: true, externalWebsocketRejected: true, missingCookieStatus: result.withoutCookie.status,
     restoredInFreshProfile: restored.status === 200 }, null, 2));
 } finally {
   if (context) await context.close();
+  websocketServer.close();
   await new Promise(resolve => server.close(resolve));
   await fs.rm(profile, { recursive: true, force: true });
   await fs.rm(profile2, { recursive: true, force: true });

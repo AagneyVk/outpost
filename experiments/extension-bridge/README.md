@@ -30,6 +30,9 @@ only for those disposable profiles.
 The test checks a synthetic login and redirect, cookie isolation, simultaneous
 callers, oversized-response rejection, rejected frame access, and transfer of a
 test cookie to a second fresh profile. It does not use a real login.
+The fixture also checks a small binary POST and a local WebSocket echo. These
+tests exercise the extension directly and do not establish Gecko upload or
+WebSocket support.
 
 ## Gecko experiment
 
