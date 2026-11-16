@@ -18,6 +18,8 @@ chrome.webRequest.onErrorOccurred.addListener(d => {
 }, { urls: targets, types: ['xmlhttprequest'] });
 
 chrome.webRequest.onHeadersReceived.addListener(d => {
+  if (active) active.seen.push({ sameInitiator: d.initiator === ownOrigin,
+    sameUrl: d.url === active.url, status: d.statusCode });
   if (!active || d.initiator !== ownOrigin || d.url !== active.url) return;
   active.events.push({
     id: d.requestId,
@@ -117,14 +119,14 @@ async function perform(message, sender) {
     addRules: (message.cookie || url === 'https://practice.expandtesting.com/authenticate') ? [ruleFor(url, message.cookie)] : [] });
   let resolveNetworkError;
   const networkErrorPromise = new Promise(resolve => { resolveNetworkError = resolve; });
-  active = { url, events: [], securityById: new Map(), resolveNetworkError };
+  active = { url, events: [], seen: [], securityById: new Map(), resolveNetworkError };
   try {
     const r = await fetch(url, { method: message.method, body: message.body,
       headers: url === 'https://practice.expandtesting.com/authenticate' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {},
       credentials: 'omit', cache: 'no-store', redirect: 'manual',
       signal: AbortSignal.timeout(10000) });
     const event = active.events.at(-1);
-    if (!event) throw Error('missing response metadata');
+    if (!event) throw Error('missing response metadata (status ' + r.status + ', type ' + r.type + ', observed ' + JSON.stringify(active.seen) + ')');
     let body = '';
     if (r.type !== 'opaqueredirect') {
       body = await readLimited(r, url.startsWith('https://practice.expandtesting.com/') ? 250000 : 4096);

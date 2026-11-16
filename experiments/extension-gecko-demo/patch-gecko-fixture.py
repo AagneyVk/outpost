@@ -17,7 +17,7 @@ if os.environ.get('OUTPOST_ORDERED_FIXTURE') == '1':
       !StringBeginsWith(spec, "https://practice.expandtesting.com/"_ns)) return NS_OK;'''
     assert hook.count(old_hosts) == 1
     hook = hook.replace(old_hosts, new_hosts, 1)
-    wire = Path('/lab/gecko-fixture-wire.cpp').read_text()
+    wire = Path('/lab/gecko-fixture-wire.cpp').read_text() + '\n' + Path('/lab/gecko-cookie-test.cpp').read_text()
     hook = hook.replace('#include <stdio.h>\n', '#include <stdio.h>\n#include <stdlib.h>\n#include "nsIUploadChannel.h"\n#include "nsIInputStream.h"\n#include "nsISeekableStream.h"\n' + wire, 1)
     anchor = '''    if (method.EqualsLiteral("POST")) {
       ++gFixtureCorsPosts;'''
@@ -134,6 +134,18 @@ commands = '''  if (aScript.EqualsLiteral("outpost:fixture-install")) {
     if (aOutResult) *aOutResult = strdup(ok ? "ok" : "error");
     return ok;
   }
+  if (aScript.EqualsLiteral("outpost:fixture-cookies-save")) {
+    nsCString data;
+    if (!FixtureSaveCookies(data)) return false;
+    if (aOutResult) *aOutResult = strdup(data.get());
+    return true;
+  }
+  if (StringBeginsWith(aScript, "outpost:fixture-cookies-restore:"_ns)) {
+    nsDependentCSubstring data(Substring(aScript, sizeof("outpost:fixture-cookies-restore:") - 1));
+    bool ok = FixtureRestoreCookies(data);
+    if (aOutResult) *aOutResult = strdup(ok ? "ok" : "error");
+    return ok;
+  }
   if (aScript.EqualsLiteral("outpost:fixture-stats")) {
     nsPrintfCString value("%u,%u", gFixturePreflights, gFixtureCorsPosts);
     if (aOutResult) *aOutResult = strdup(value.get());
@@ -156,5 +168,9 @@ commands = '''  if (aScript.EqualsLiteral("outpost:fixture-install")) {
     return true;
   }
 '''
+if os.environ.get('OUTPOST_ORDERED_FIXTURE') != '1':
+    start = commands.index('  if (aScript.EqualsLiteral("outpost:fixture-cookies-save"))')
+    end = commands.index('  if (aScript.EqualsLiteral("outpost:fixture-stats"))')
+    commands = commands[:start] + commands[end:]
 text = text.replace(anchor, commands + anchor, 1)
 source.write_text(text)

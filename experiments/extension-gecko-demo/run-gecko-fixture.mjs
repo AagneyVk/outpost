@@ -20,7 +20,8 @@ let relayConnectionAttempts = 0;
 const routes = new Map([
   ['/', [path.join(dir, 'gecko-fixture.html'), 'text/html']],
   ['/engine/gecko.js', [path.join(build, 'gecko.js'), 'text/javascript']],
-  ['/engine/gecko.wasm.zst', [path.join(build, 'gecko.wasm.zst'), 'application/octet-stream']]
+  ['/engine/gecko.wasm.zst', [path.join(build, 'gecko.wasm.zst'), 'application/octet-stream']],
+  ['/portable.js', [path.join(dir, '../../public/portable.js'), 'text/javascript']]
 ]);
 const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url, 'http://localhost');
@@ -126,6 +127,7 @@ try {
   let restoredLogin = null;
   let httpsEvidence = null;
   let demoEvidence = null;
+  let encryptedDemoSession = null;
   assert.match(cookieControl, /control=present/);
   assert.equal(cookieResult.href, 'http://fixture.test/home');
   assert.match(cookieResult.cookie, /control=present/);
@@ -169,6 +171,16 @@ try {
       const trace = await page.evaluate(() => window.demoTrace || []);
       demoEvidence = { loginForm: true, submitted: true, securePage: true, hostCookieStoreEmpty: true,
         authCookies: trace.find(entry => entry.stage === 'auth')?.cookieHeaders.map(({ name, hasExpiry }) => ({ name, hasExpiry })) || [] };
+      encryptedDemoSession = await page.evaluate(async () => {
+        const serialized = await gecko.evalChrome('outpost:fixture-cookies-save');
+        if (!serialized || serialized === 'error') throw Error('demo session snapshot failed');
+        const { seal } = await import('/portable.js');
+        const plaintext = new TextEncoder().encode(serialized);
+        try {
+          const sealed = await seal(plaintext, 'synthetic-passphrase-1!', 'a'.repeat(64));
+          return Array.from(new Uint8Array(await sealed.arrayBuffer()));
+        } finally { plaintext.fill(0); }
+      });
     }
 
     if (testHttps) {
@@ -193,6 +205,9 @@ try {
       assert.equal(site.href, 'https://example.com/');
       assert.equal(site.title, 'Example Domain');
       const channelSecurityInfo = await page.evaluate(() => gecko.evalChrome('outpost:fixture-security-info'));
+      // This mismatch is a release blocker, not a successful HTTPS result.
+      assert.equal(site.secureContext, true);
+      assert.equal(channelSecurityInfo, 'absent', 'security-info behavior changed; audit before accepting it');
       // Verify the local relay probe sees connections before using it to assert
       // that the failed certificate requests cannot fall back to the relay.
       const initialAttempts = relayConnectionAttempts;
@@ -271,10 +286,53 @@ try {
     assert.deepEqual(egressCases.at(-1), { kind: 'account', cookie: 'workspace_session=alpha' });
     assert.deepEqual(await context.cookies(origin), []);
     if (testDemo) {
+      // Restore before visiting the demo: its login page creates a new session
+      // cookie, which must not be silently overwritten by an older snapshot.
+      const beforeRestore = await restoredPage.evaluate(() => gecko.evalChrome('outpost:fixture-cookies-save'));
+      demoEvidence.restoredWithoutSessionSnapshot = !!beforeRestore;
+      assert.equal(demoEvidence.restoredWithoutSessionSnapshot, false, 'expected session-only cookies to require restoration');
+      const restoredCookies = await restoredPage.evaluate(async bytes => {
+        const { unseal } = await import('/portable.js');
+        const encrypted = new Blob([Uint8Array.from(bytes)]);
+        let wrongPasswordRejected = false;
+        try { await unseal(encrypted, 'incorrect-password-1!', 'a'.repeat(64)); }
+        catch { wrongPasswordRejected = true; }
+        const damaged = Uint8Array.from(bytes);
+        damaged[damaged.length - 1] ^= 1;
+        let tamperingRejected = false;
+        try { await unseal(new Blob([damaged]), 'synthetic-passphrase-1!', 'a'.repeat(64)); }
+        catch { tamperingRejected = true; }
+        const plaintext = await unseal(encrypted, 'synthetic-passphrase-1!', 'a'.repeat(64));
+        try {
+          const original = new TextDecoder().decode(plaintext);
+          const result = await gecko.evalChrome('outpost:fixture-cookies-restore:' + original);
+          const roundTrip = await gecko.evalChrome('outpost:fixture-cookies-save');
+          const normal = data => data.trim().split('\n').sort().join('\n');
+          const repeated = await gecko.evalChrome('outpost:fixture-cookies-restore:' + original);
+          const afterRepeat = await gecko.evalChrome('outpost:fixture-cookies-save');
+          return { wrongPasswordRejected, tamperingRejected, result,
+            duplicateRejected: repeated !== 'ok' && normal(roundTrip) === normal(afterRepeat),
+            attributesRoundTripped: normal(original) === normal(roundTrip) };
+        } finally { plaintext.fill(0); }
+      }, encryptedDemoSession);
+      assert.equal(restoredCookies.wrongPasswordRejected, true);
+      assert.equal(restoredCookies.tamperingRejected, true);
+      assert.equal(restoredCookies.result, 'ok');
+      assert.equal(restoredCookies.duplicateRejected, true);
+      assert.equal(restoredCookies.attributesRoundTripped, true, 'cookie attributes changed during restore');
       await timed(restoredPage.evaluate(() => gecko.load('https://practice.expandtesting.com/secure')), 45000, 'restored public demo session');
-      const restoredState = JSON.parse(await restoredPage.evaluate(() => gecko.evalChrome(
-        "JSON.stringify({href:location.href,success:document.body?.innerText?.includes('You logged into a secure area') || false})")));
-      demoEvidence.restoredInFreshProfile = restoredState.href === 'https://practice.expandtesting.com/secure' && restoredState.success;
+      const authenticated = JSON.parse(await restoredPage.evaluate(() => gecko.evalChrome(
+        "JSON.stringify({href:location.href,logout:!!document.querySelector('a[href*=logout]')})")));
+      demoEvidence.restoredFromEncryptedSessionSnapshot = authenticated.href === 'https://practice.expandtesting.com/secure' && authenticated.logout;
+      demoEvidence.wrongPasswordRejected = restoredCookies.wrongPasswordRejected;
+      demoEvidence.tamperingRejected = restoredCookies.tamperingRejected;
+      demoEvidence.duplicateRejected = restoredCookies.duplicateRejected;
+      demoEvidence.cookieAttributesRoundTripped = restoredCookies.attributesRoundTripped;
+      if (!demoEvidence.restoredFromEncryptedSessionSnapshot) {
+        console.error('Restored demo trace:', JSON.stringify(await restoredPage.evaluate(() => window.demoTrace || [])),
+          'final path:', new URL(authenticated.href).pathname);
+      }
+      assert.equal(demoEvidence.restoredFromEncryptedSessionSnapshot, true, 'encrypted synthetic session did not restore');
       assert.deepEqual(await context.cookies('https://practice.expandtesting.com'), []);
     }
   } else if (patched) {
