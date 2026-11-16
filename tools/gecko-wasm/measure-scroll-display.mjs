@@ -8,8 +8,8 @@ try {
   await context.route('**/gecko-lab/start.mjs', async route => {
     const response = await route.fetch();
     let source = await response.text();
-    if (baseline) source = source.replace('gecko-input-v6.js','gecko-input-v3.js')
-      .replace('gecko-input-v4.wasm.zst','gecko-input-v2.wasm.zst').replace('    nativeZoom = true;', '    nativeZoom = false;');
+    if (baseline) source = source.replace('gecko-input-v7.js','gecko-input-v3.js')
+      .replace('gecko-input-v7.wasm.zst','gecko-input-v2.wasm.zst').replace('    nativeZoom = true;', '    nativeZoom = false;');
     source = source.replace('await gecko.init();', `await gecko.init();
       window.testGecko = gecko; window.inputTrace = []; window.paintTrace = []; window.commandTrace = [];
       const originalRun = gecko.run.bind(gecko), originalRunCmd = gecko.runCmd.bind(gecko), originalBlit = gecko.blit.bind(gecko);

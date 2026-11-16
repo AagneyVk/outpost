@@ -18,6 +18,26 @@ async function sessionFile(create, name = 'outpost-session.json') {
   return directory.getFileHandle(name, { create });
 }
 
+export async function hasSessionCookieSnapshot() {
+  try {
+    await sessionFile(false, 'outpost-session-cookies.dat');
+    return true;
+  } catch (error) {
+    if (error.name === 'NotFoundError') return false;
+    throw error;
+  }
+}
+
+export async function clearSessionCookieSnapshot() {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const directory = await root.getDirectoryHandle(profileName());
+    await directory.removeEntry('outpost-session-cookies.dat');
+  } catch (error) {
+    if (error.name !== 'NotFoundError') throw error;
+  }
+}
+
 export async function readBrowserHistory() {
   try {
     const file = await (await sessionFile(false, 'outpost-history.ndjson')).getFile();

@@ -18,8 +18,8 @@ try {
   const context=await browser.newContext({viewport:{width:1400,height:850}});
   await context.route('**/gecko-lab/start.mjs',async route=>{
     const response=await route.fetch(); let source=await response.text();
-    if(process.argv.includes('--previous')) source=source.replace('gecko-input-v6.js','gecko-input-v3.js')
-      .replace('gecko-input-v4.wasm.zst','gecko-input-v2.wasm.zst').replace('    nativeZoom = true;','    nativeZoom = false;');
+    if(process.argv.includes('--previous')) source=source.replace('gecko-input-v7.js','gecko-input-v3.js')
+      .replace('gecko-input-v7.wasm.zst','gecko-input-v2.wasm.zst').replace('    nativeZoom = true;','    nativeZoom = false;');
     source=source.replace('await gecko.init();',`await gecko.init();window.testGecko=gecko;
       window.commandState={completed:0};const orig=gecko.runCmd.bind(gecko),blit=gecko.blit.bind(gecko);
       gecko.blit=()=>{window.commandState.resultPtr=gecko.mod.HEAP32[(gecko.cmd+12)>>>2]>>>0;return blit();};

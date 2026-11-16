@@ -1,4 +1,4 @@
-import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory } from './profile.mjs';
+import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory, hasSessionCookieSnapshot, clearSessionCookieSnapshot } from './profile.mjs';
 import { captureDrag } from './drag-capture.mjs';
 import { optimizeWheelQueue } from './wheel-queue.mjs';
 import { watchEngine } from './engine-watchdog.mjs';
@@ -266,14 +266,24 @@ resumeBrowser.onclick = () => {
 };
 const profileFile = document.querySelector('#profile-file');
 const exitBrowser = document.querySelector('#exit-browser');
+let sessionCookieCapability = false;
 exitBrowser.onclick = async () => {
   exitBrowser.disabled = true;
-  status.textContent = 'Saving tabs and history…';
-  await Promise.all([sessionWrite, historyWrite]);
-  const url = new URL(location.href);
-  url.hash = 'export-profile';
-  history.replaceState(null, '', url);
-  location.reload();
+  status.textContent = 'Saving your browser session…';
+  try {
+    await Promise.all([sessionWrite, historyWrite]);
+    if (!sessionCookieCapability)
+      throw Error('This browser build cannot save session logins. Reload OUTPOST to update it.');
+    if (await gecko.evalChrome('outpost:session-cookie-save') !== 'ok')
+      throw Error('Could not save session logins. Keep the browser open and try again.');
+    const url = new URL(location.href);
+    url.hash = 'export-profile';
+    history.replaceState(null, '', url);
+    location.reload();
+  } catch (error) {
+    status.textContent = error.message || 'Could not save the browser session.';
+    exitBrowser.disabled = false;
+  }
 };
 if (location.hash === '#export-profile') {
   history.replaceState(null, '', location.pathname + location.search);
@@ -494,7 +504,7 @@ start.addEventListener('click', async () => {
     if (custom && (relay.protocol !== 'wss:' || relay.username || relay.password || relay.hash)) {
       throw Error('Enter a secure wss:// relay URL without credentials or a fragment.');
     }
-    const { Gecko } = await import('./engine/gecko-input-v6.js');
+    const { Gecko } = await import('./engine/gecko-input-v7.js');
     const initial = surfaceSize();
     gecko = new Gecko({
       canvas,
@@ -503,13 +513,19 @@ start.addEventListener('click', async () => {
       wispUrl: relay.href,
       print: reportEngineMessage,
       printErr: reportEngineMessage,
-      wasm: { url: new URL('./engine/gecko-input-v4.wasm.zst', import.meta.url).href, compressed: true },
+      wasm: { url: new URL('./engine/gecko-input-v7.wasm.zst', import.meta.url).href, compressed: true },
       profile: profileName(),
       env: { GECKO_NOWASMJIT: '1' },
     });
     optimizeWheelQueue(gecko, canvas);
     await gecko.init();
     watchEngine(gecko, { show: () => { recovery.hidden = false; }, hide: () => { recovery.hidden = true; } });
+    sessionCookieCapability = await gecko.evalChrome('outpost:session-cookie-capability') === 'outpost-session-cookies-v1';
+    if (await hasSessionCookieSnapshot()) {
+      if (!sessionCookieCapability || await gecko.evalChrome('outpost:session-cookie-restore') !== 'ok')
+        throw Error('Could not restore session logins. Your saved profile has not been removed.');
+      await clearSessionCookieSnapshot();
+    }
     await restoreTabs().catch(error => console.warn('Could not restore tabs', error));
     const savedHistory = await readBrowserHistory().catch(error => {
       console.warn('Could not read history', error);

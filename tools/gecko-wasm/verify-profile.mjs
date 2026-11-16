@@ -9,6 +9,8 @@ const upgradedEngine = process.argv[5];
 const baselineEngineName = process.argv[6] ?? 'gecko';
 const appEngineName = process.argv[7] ?? 'gecko-input-v1';
 const legacyUpgrade = process.env.OUTPOST_TEST_UPGRADE === '1';
+const sessionBuild = process.env.OUTPOST_SESSION_BUILD;
+const testSession = Boolean(sessionBuild) || process.env.OUTPOST_TEST_SESSION === '1';
 const site = 'http://outpost-fixture.test/';
 const secret = 'test7!Qz';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -36,15 +38,28 @@ async function fixture(context) {
       streams.delete(id);
       const seed = request.startsWith('GET /login ');
       const authenticated = /^Cookie:.*outpost_fixture=portable-session/im.test(request);
-      requests.push({ seed, authenticated });
+      const sessionAuthenticated = /^Cookie:.*outpost_temporary=portable-session-cookie/im.test(request);
+      const host = /^Host:\s*([^\r\n]+)/im.exec(request)?.[1]?.trim() || '';
+      requests.push({ seed, authenticated, sessionAuthenticated, host });
       const color = seed ? '#0bbf75' : authenticated ? '#175de0' : '#dc3248';
       const html = `<body style="margin:0;background:${color}"><div style="width:100px;height:80px;background:#aa2233"></div>OUTPOST profile fixture</body>`;
-      const cookie = seed ? 'Set-Cookie: outpost_fixture=portable-session; Path=/; HttpOnly; Max-Age=86400\r\n' : '';
+      const cookie = seed ? 'Set-Cookie: outpost_fixture=portable-session; Path=/; HttpOnly; Max-Age=86400\r\n' +
+        (testSession ? 'Set-Cookie: outpost_temporary=portable-session-cookie; Path=/; HttpOnly; SameSite=Lax\r\n' : '') : '';
       send(2, id, Buffer.from(`HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ${Buffer.byteLength(html)}\r\nConnection: close\r\n${cookie}\r\n${html}`));
       send(4, id, Buffer.from([1]));
     });
   });
   return requests;
+}
+
+async function useSessionBuild(context) {
+  if (!sessionBuild) return;
+  for (const [url, file, contentType] of [
+    ['**/gecko-lab/engine/gecko-input-v7.js', 'gecko.js', 'text/javascript'],
+    ['**/gecko-lab/engine/gecko-input-v7.wasm.zst', 'gecko.wasm.zst', 'application/octet-stream']
+  ]) {
+    await context.route(url, route => route.fulfill({ path: path.resolve(sessionBuild, file), contentType }));
+  }
 }
 
 async function navigate(page, path, color) {
@@ -65,12 +80,13 @@ async function navigate(page, path, color) {
 try {
   const original = await browser.newContext();
   const initialRequests = await fixture(original);
+  await useSessionBuild(original);
   if (legacyUpgrade) {
     await original.route('**/gecko-lab/start.mjs', async route => {
       const response = await route.fetch();
       const source = (await response.text())
-        .replace('gecko-input-v6.js', 'gecko-input-v3.js')
-        .replace('gecko-input-v4.wasm.zst', 'gecko-input-v2.wasm.zst')
+        .replace('gecko-input-v7.js', 'gecko-input-v3.js')
+        .replace('gecko-input-v7.wasm.zst', 'gecko-input-v2.wasm.zst')
         .replace('    nativeZoom = true;', '    nativeZoom = false;');
       await route.fulfill({ response, body: source });
     });
@@ -87,16 +103,21 @@ try {
   await navigate(page, '/login', [11, 191, 117]);
   assert(initialRequests.some(request => request.seed));
   await page.getByRole('button', { name: 'New tab', exact: true }).click();
+  if (testSession) {
+    await page.getByRole('textbox', { name: 'Address' }).fill('http://another-fixture.test/login');
+    await page.getByRole('textbox', { name: 'Address' }).press('Enter');
+    await page.getByText('Loaded another-fixture.test', { exact: true }).waitFor({ state: 'attached' });
+  }
   await page.getByRole('textbox', { name: 'Address' }).fill(site + 'proof');
   await page.getByRole('textbox', { name: 'Address' }).press('Enter');
   await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
   for (let i = 0; i < 5; i++) await page.locator('#zoom-in').click();
-  await page.waitForFunction(async () => {
+  await page.waitForFunction(async sessionTest => {
     const entry = document.querySelector('script[type="module"][src$="/start.mjs"]');
     const { readBrowserSession } = await import(new URL('./profile.mjs', entry.src).href);
     const session = await readBrowserSession();
-    return session?.active === 1 && session.tabs[1].position === 0 && session.zoom === 150;
-  });
+    return session?.active === 1 && session.tabs[1].position === (sessionTest ? 1 : 0) && session.zoom === 150;
+  }, testSession);
   // Allow the persistent cookie write to reach OPFS before closing the engine tab.
   await page.waitForFunction(async () => {
     const root = await navigator.storage.getDirectory();
@@ -106,6 +127,15 @@ try {
     }
     return false;
   });
+  if (testSession) {
+    await page.locator('#exit-browser').click();
+    await page.getByText('Browser closed. Enter a passphrase and export your saved profile.').waitFor({ timeout: 30000 });
+    assert(await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle('outpost-gecko-lab');
+      return (await (await dir.getFileHandle('outpost-session-cookies.dat')).getFile()).size > 0;
+    }), 'Explicit exit must save the session cookie snapshot');
+  }
   await page.close();
   if (legacyUpgrade) {
     await original.unroute('**/gecko-lab/start.mjs');
@@ -163,6 +193,7 @@ try {
   for await (const chunk of stream) chunks.push(chunk);
   const archive = Buffer.concat(chunks);
   assert(!archive.includes('portable-session'));
+  assert(!archive.includes('portable-session-cookie'));
   const hasProfile = () => page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     for await (const name of root.keys()) if (name === 'outpost-gecko-lab') return true;
@@ -176,6 +207,7 @@ try {
 
   const fresh = await browser.newContext();
   const restoredRequests = await fixture(fresh);
+  await useSessionBuild(fresh);
   page = await fresh.newPage();
   await page.goto(restoreBase);
   await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 20000 });
@@ -194,20 +226,34 @@ try {
   assert.equal(await page.locator('#tabs [aria-current]').count(), 2);
   assert.equal(await page.locator('#tabs [aria-current]').nth(1).getAttribute('aria-current'), 'true');
   assert(restoredRequests.some(request => request.authenticated));
+  if (testSession) assert(restoredRequests.some(request => request.sessionAuthenticated),
+    'The encrypted profile must restore the HttpOnly session cookie');
   assert(!restoredRequests.some(request => request.seed));
+  if (testSession) {
+    await page.getByRole('textbox', { name: 'Address' }).fill('http://another-fixture.test/proof');
+    await page.getByRole('textbox', { name: 'Address' }).press('Enter');
+    await page.getByText('Loaded another-fixture.test', { exact: true }).waitFor({ state: 'attached' });
+    assert(restoredRequests.some(request => request.host === 'another-fixture.test' && request.sessionAuthenticated),
+      'Session cookies for a second origin must also survive export and import');
+  }
   await page.getByRole('button', { name: 'History', exact: true }).click();
-  assert.equal(await page.locator('#history-list li').count(), 2);
+  assert.equal(await page.locator('#history-list li').count(), testSession ? 4 : 2);
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Clear browsing history' }).click();
   await page.locator('#history-list li').first().waitFor({ state: 'detached' });
+  const requestsBeforeReload = restoredRequests.length;
   await page.reload();
   await page.getByText('Network settings', { exact: true }).click();
   await page.getByLabel('Custom Wisp endpoint').fill(customRelay ?? '');
   await page.locator('#start').click();
-  await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
+  await page.getByText(testSession ? 'Loaded another-fixture.test' : 'Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
+  if (testSession) assert(!restoredRequests.slice(requestsBeforeReload).some(request => request.sessionAuthenticated),
+    'An already-consumed snapshot must not resurrect a stale session on an unclean reload');
   await page.getByRole('button', { name: 'History', exact: true }).click();
   assert.equal(await page.locator('#history-list li').count(), 0);
-  console.log('PASS: encrypted export reopened two tabs and restored the selected tab’s HttpOnly login.');
+  console.log(testSession
+    ? 'PASS: encrypted export restored HttpOnly session cookies for two origins and consumed the snapshot.'
+    : 'PASS: encrypted export reopened two tabs and restored the selected tab’s HttpOnly login.');
 } finally {
   await browser.close();
 }

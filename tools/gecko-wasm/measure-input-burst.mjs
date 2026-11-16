@@ -8,7 +8,8 @@ try {
   const context = await browser.newContext({ viewport: { width: 900, height: 650 } });
   await context.route('**/gecko-lab/start.mjs', async route => {
     const response = await route.fetch(); let source = await response.text();
-    if (baseline) source = source.replace('gecko-input-v6.js', 'gecko-input-v5.js');
+    if (baseline) source = source.replace('gecko-input-v7.js', 'gecko-input-v5.js')
+      .replace('gecko-input-v7.wasm.zst', 'gecko-input-v4.wasm.zst');
     const anchor = 'await gecko.init();';
     if (!source.includes(anchor)) throw Error('Engine instrumentation anchor missing');
     source = source.replace(anchor, `${anchor}
