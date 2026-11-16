@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "OUTPOST public demo login experiment",
+  "version": "0.0.1",
+  "permissions": ["webRequest", "declarativeNetRequest"],
+  "host_permissions": ["https://practice.expandtesting.com/*"]
+}
