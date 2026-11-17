@@ -37,7 +37,10 @@ static already_AddRefed<nsITransportSecurityInfo> OutpostTestSecurityInfo(
   auto result = verifier->VerifySSLServerCert(
       serverDER, mozilla::pkix::Now(), nullptr, "example.com"_ns, verifiedDER,
       psm::CertVerifier::FLAG_LOCAL_ONLY, Some(std::move(extraCertificates)));
-  if (result != mozilla::pkix::Success || verifiedDER.IsEmpty()) return nullptr;
+  if (result != mozilla::pkix::Success || verifiedDER.IsEmpty()) {
+    fprintf(stderr, "OUTPOST_FIXTURE_CERT_VERIFY_RESULT=%d\n", int(mozilla::pkix::MapResultToPRErrorCode(result)));
+    return nullptr;
+  }
   chain.Clear();
   for (const auto& der : verifiedDER) {
     nsCOMPtr<nsIX509Cert> cert;

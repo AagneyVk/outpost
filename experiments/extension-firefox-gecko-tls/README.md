@@ -14,6 +14,8 @@ With Firefox 160 and the disposable patched WASM engine used for this experiment
 * A synthetic HSTS header added by the fixture was recorded by Gecko in the corresponding storage partition. This does **not** establish correct handling of real response headers or redirects.
 * A separate adversarial run replaced the returned page body while retaining the real site's valid certificate. Gecko accepted the substituted page. This documents the unresolved security vulnerability; the tampering run deliberately asserts the current unsafe behavior so changes to it are visible.
 
+A later run on this machine encountered an HTTPS-intercepted example.com certificate that the host Firefox accepted but guest Gecko rejected with NSS `SEC_ERROR_UNKNOWN_ISSUER` (-8179). The normal success assertion therefore fails in that environment. This is a compatibility blocker, and the test does not add a trust exception to make it pass.
+
 The extension obtains metadata with [Firefox's `webRequest.getSecurityInfo`](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/getSecurityInfo). Firefox verifies the actual host connection; the unsafe handoff afterward can be tampered with. A verified certificate does not prove that the page body received through a separate untrusted path is authentic. Other TLS properties are absent or fabricated in the test object. The public synthetic certificate in this directory has no associated private key here and is only test data.
 
 ## Running the tests

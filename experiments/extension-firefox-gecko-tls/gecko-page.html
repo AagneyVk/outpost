@@ -68,7 +68,7 @@ try {
     wasm: { url: '/engine/gecko.wasm.zst', compressed: true },
     profile: 'outpost-firefox-fixture', fs, env: { GECKO_NOWASMJIT: '1', GRE_DIR: '/gre-baked' },
     print: msg => { if (/load|hsts|security|error/i.test(msg)) logs.push(String(msg).slice(0, 240)); },
-    printErr: msg => { if (/hsts|security|error/i.test(msg)) logs.push(String(msg).slice(0, 240)); } });
+    printErr: msg => { if (/hsts|security|error|cert_verify_result/i.test(msg)) logs.push(String(msg).slice(0, 240)); } });
   await gecko.init();
   if (await gecko.evalChrome('outpost:fixture-install') !== 'ok') throw Error('Fixture install failed');
   const otherSite = await bridge('https://example.org/');
@@ -96,7 +96,8 @@ try {
   const selfSigned = await gecko.evalChrome('outpost:fixture-nav-status');
   await fetch('/report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ site, securityInfo, geckoFingerprint, beforeHsts, afterHsts,
-      hostEvidence, failures, missing, corrupt, expired, selfSigned, wrongLeaf: wrongCertificate[0], logs: logs.slice(-30) }) });
+      hostEvidence, failures, missing, corrupt, expired, selfSigned, wrongLeaf: wrongCertificate[0],
+      certificateResults: logs.filter(line => /cert_verify_result/i.test(line)), logs: logs.slice(-30) }) });
 } catch (error) {
   await fetch('/report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fatal: String(error && error.stack || error) }) });
