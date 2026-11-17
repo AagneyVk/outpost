@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>OUTPOST isolated Firefox-Gecko HTTPS fixture</title>
+<canvas id="screen" width="800" height="600"></canvas>
+<script type="module">
+import { Gecko } from '/engine/gecko.js';
+let nextId = 0;
+const hostEvidence = [];
+const failures = [];
+const logs = [];
+let evidenceMode = 'normal';
+let wrongCertificate;
+function bridge(url) {
+  return new Promise((resolve, reject) => {
+    const id = ++nextId;
+    const timer = setTimeout(() => reject(Error('extension timeout')), 15000);
+    function receive(event) {
+      if (event.source !== window || event.origin !== location.origin || !event.data ||
+          event.data.type !== 'outpost-test-response' || event.data.id !== id) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', receive);
+      resolve(event.data.result);
+    }
+    window.addEventListener('message', receive);
+    window.postMessage({ type: 'outpost-test-request', id, url }, location.origin);
+  });
+}
+const paths = new Map([
+  ['outpost-fixture-example', 'https://example.com/'],
+  ['outpost-fixture-example-missing', 'https://example.com/'],
+  ['outpost-fixture-example-corrupt', 'https://example.com/'],
+  ['outpost-fixture-expired', 'https://expired.badssl.com/'],
+  ['outpost-fixture-self-signed', 'https://self-signed.badssl.com/']
+]);
+const fs = {
+  async stat(path) { return paths.has(path) ? { size: 262144, isDir: false } : null; },
+  async readdir() { return []; },
+  async readFile(path) {
+    const url = paths.get(path);
+    if (!url) throw Error('Unexpected fixture path');
+    const response = await bridge(url);
+    if (!response.ok) { failures.push({ url, networkError: response.networkError || null }); throw Error('Host rejected HTTPS'); }
+    const digest = await crypto.subtle.digest('SHA-256', Uint8Array.from(response.security.certificates[0]));
+    const fingerprint = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    hostEvidence.push({ url, state: response.security.state,
+      requestId: response.security.id, certificateCount: response.security.certificates.length,
+      derLengths: response.security.certificates.map(c => c.length), fingerprint });
+    const chain = response.security.certificates.map(cert => btoa(String.fromCharCode(...cert)));
+    if (evidenceMode === 'corrupt') chain.splice(0, chain.length, ...wrongCertificate);
+    const security = evidenceMode === 'missing' ? '' : ['v1', response.security.protocol, ...chain].join(':');
+    // The HSTS response header is deliberately injected only in this test, to
+    // verify Gecko processes it when transport security information is present.
+    const wire = [String(response.status), '', '', '', 'text/html; charset=utf-8',
+      security, 'max-age=600', response.body].join('\n');
+    const bytes = new TextEncoder().encode(wire);
+    if (bytes.length >= 262144) throw Error('Fixture body too large');
+    const padded = new Uint8Array(262144);
+    padded.set(bytes);
+    return padded;
+  }
+};
+try {
+  const gecko = new Gecko({ canvas: document.querySelector('#screen'), width: 800, height: 600,
+    wispUrl: location.origin.replace(/^http:/, 'ws:') + '/wisp/',
+    wasm: { url: '/engine/gecko.wasm.zst', compressed: true },
+    profile: 'outpost-firefox-fixture', fs, env: { GECKO_NOWASMJIT: '1', GRE_DIR: '/gre-baked' },
+    print: msg => { if (/load|hsts|security|error/i.test(msg)) logs.push(String(msg).slice(0, 240)); },
+    printErr: msg => { if (/hsts|security|error/i.test(msg)) logs.push(String(msg).slice(0, 240)); } });
+  await gecko.init();
+  if (await gecko.evalChrome('outpost:fixture-install') !== 'ok') throw Error('Fixture install failed');
+  const otherSite = await bridge('https://example.org/');
+  if (!otherSite.ok || !otherSite.security.certificates.length) throw Error('Other-site certificate unavailable');
+  wrongCertificate = otherSite.security.certificates.map(cert => btoa(String.fromCharCode(...cert)));
+  if (new URLSearchParams(location.search).get('case') === 'forged') {
+    wrongCertificate = [(await (await fetch('/synthetic-cert')).text()).trim()];
+  }
+  const beforeHsts = await gecko.evalChrome('outpost:fixture-hsts');
+  await gecko.load('https://example.com/');
+  const site = JSON.parse(await gecko.evalChrome("JSON.stringify({href:location.href,title:document.title,secureContext:window.isSecureContext})"));
+  const securityInfo = await gecko.evalChrome('outpost:fixture-security-info');
+  const geckoFingerprint = (await gecko.evalChrome('outpost:fixture-cert-fingerprint')).replace(/:/g, '').toUpperCase();
+  const afterHsts = await gecko.evalChrome('outpost:fixture-hsts');
+  evidenceMode = 'missing';
+  await gecko.load('https://example.com/?case=missing');
+  const missing = await gecko.evalChrome('outpost:fixture-nav-status');
+  evidenceMode = 'corrupt';
+  await gecko.load('https://example.com/?case=corrupt');
+  const corrupt = await gecko.evalChrome('outpost:fixture-nav-status');
+  evidenceMode = 'normal';
+  await gecko.load('https://expired.badssl.com/');
+  const expired = await gecko.evalChrome('outpost:fixture-nav-status');
+  await gecko.load('https://self-signed.badssl.com/');
+  const selfSigned = await gecko.evalChrome('outpost:fixture-nav-status');
+  await fetch('/report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ site, securityInfo, geckoFingerprint, beforeHsts, afterHsts,
+      hostEvidence, failures, missing, corrupt, expired, selfSigned, wrongLeaf: wrongCertificate[0], logs: logs.slice(-30) }) });
+} catch (error) {
+  await fetch('/report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fatal: String(error && error.stack || error) }) });
+}
+</script>
