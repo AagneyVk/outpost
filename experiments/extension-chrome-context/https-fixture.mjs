@@ -1,6 +1,6 @@
 // Disposable fixed-origin test. Not a general network bridge.
 import { validateResponseBinding } from './response-binding.mjs';
-export async function createHttpsFixture({ delegated = false, stateOnly = false, tamper = false } = {}) {
+export async function createHttpsFixture({ delegated = false, stateOnly = false, internal = false, tamper = false, noEvidence = false, noScriptEvidence = false } = {}) {
   const target = { tabId: (await chrome.tabs.getCurrent()).id };
   const requests = new Map(), responses = new Map(), failures = new Map(), redirects = new Set(), completed = new Set();
   const report = { requested: 0 };
@@ -34,17 +34,26 @@ export async function createHttpsFixture({ delegated = false, stateOnly = false,
       redirect: 'error', signal: AbortSignal.timeout(10000) }); } catch { /* inspect the network error */ }
     for (let i = 0; i < 40 && ![...requests].some(([id, requestUrl]) => requestUrl === url && failures.has(id)); i++)
       await new Promise(resolve => setTimeout(resolve, 25));
-    return [...requests].some(([id, requestUrl]) => requestUrl === url &&
-      failures.get(id) === code && !responses.has(id));
+    const observed = [...requests].filter(([, requestUrl]) => requestUrl === url)
+      .map(([id]) => ({ error: failures.get(id) || null, receivedResponse: responses.has(id) }));
+    (report.badCertificateResults ??= {})[url] = observed;
+    return observed.some(item => item.error === code && !item.receivedResponse);
   }
   report.expiredRejected = await rejectedWith('https://expired.badssl.com/', 'net::ERR_CERT_DATE_INVALID');
   report.selfSignedRejected = await rejectedWith('https://self-signed.badssl.com/', 'net::ERR_CERT_AUTHORITY_INVALID');
-  const url = 'https://example.com/';
+  const fixtureURLs = new Map([['outpost-fixture-example', 'https://example.com/']]);
+  if (internal) fixtureURLs.set('outpost-fixture-example-script', 'https://example.com/s.js');
+  const attempted = new Set();
+  report.resources = [];
+  report.suppressedURLs = [];
   const fs = {
-    async stat(path) { return path === 'outpost-fixture-example' ? { size: 262144, isDir: false } : null; },
+    async stat(path) { return fixtureURLs.has(path) ? { size: 262144, isDir: false } : null; },
     async readdir() { return []; },
     async readFile(path) {
-      if (path !== 'outpost-fixture-example' || report.requested++) throw Error('Unexpected fixture request');
+      const url = fixtureURLs.get(path);
+      if (!url || attempted.has(url) || report.requested >= 2) throw Error('Unexpected fixture request');
+      attempted.add(url);
+      report.requested++;
       const response = await fetch(url, { credentials: 'omit', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10000) });
       const bodyBytes = new Uint8Array(await response.arrayBuffer());
       for (let i = 0; i < 100 && ![...responses.values()].some(item => item.url === url); i++)
@@ -97,10 +106,16 @@ export async function createHttpsFixture({ delegated = false, stateOnly = false,
       report.hostIssuer = event.securityDetails.issuer;
       report.bodyMatched = true;
       report.chainCount = chain.length;
+      report.evidenceSuppressed = noEvidence;
+      report.resources.push({ url, status: response.status });
+      const suppressEvidence = noEvidence || (noScriptEvidence && path === 'outpost-fixture-example-script');
+      if (suppressEvidence) report.suppressedURLs.push(url);
       // getCertificate is origin-keyed, not request-keyed; this fixture does
       // not establish request-bound chain evidence. Gecko must verify it.
-      const wire = [String(response.status), '', '', '', 'text/html; charset=utf-8',
-        [stateOnly ? 'v3' : delegated ? 'v2' : 'v1', protocol, ...chain].join(':'), 'max-age=600', body].join('\n');
+      const contentType = response.headers.get('content-type') || 'application/octet-stream';
+      if (contentType.includes('\n') || contentType.includes('\r')) throw Error('Invalid content type');
+      const wire = [String(response.status), '', '', '', contentType,
+        suppressEvidence ? '' : [stateOnly ? 'v3' : delegated ? 'v2' : 'v1', protocol, ...chain].join(':'), 'max-age=600', body].join('\n');
       const bytes = new TextEncoder().encode(wire);
       if (bytes.length >= 262144) throw Error('Fixture response too large');
       const padded = new Uint8Array(262144);

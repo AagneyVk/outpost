@@ -9,9 +9,12 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(dir, '../..');
 const fixtureBuild = process.env.OUTPOST_FIXTURE_BUILD && path.resolve(process.env.OUTPOST_FIXTURE_BUILD);
 const delegated = process.env.OUTPOST_DELEGATED_TEST === '1';
-const stateOnly = process.env.OUTPOST_STATE_TEST === '1';
+const internal = process.env.OUTPOST_INTERNAL_TEST === '1';
+const stateOnly = internal || process.env.OUTPOST_STATE_TEST === '1';
 const tamper = process.env.OUTPOST_STATE_TAMPER === '1';
-if (delegated && stateOnly || tamper && !stateOnly) throw Error('Choose one HTTPS fixture mode');
+const noEvidence = process.env.OUTPOST_STATE_NO_EVIDENCE === '1';
+const noScriptEvidence = process.env.OUTPOST_INTERNAL_NO_SCRIPT_EVIDENCE === '1';
+if (delegated && stateOnly || (tamper || noEvidence) && !stateOnly || tamper && noEvidence || noScriptEvidence && (!internal || tamper || noEvidence)) throw Error('Choose one HTTPS fixture mode');
 if (stateOnly && !fixtureBuild) throw Error('State test requires its matching test engine');
 if (delegated && !fixtureBuild) throw Error('Delegated test requires its matching test engine');
 const addon = await fs.mkdtemp(path.join(dir, 'temporary-addon-'));
@@ -59,7 +62,8 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(String(error)));
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text().slice(0, 500)); });
-  await page.goto('chrome-extension://' + id + '/index.html' + (fixtureBuild ? (stateOnly ? (tamper ? '?mode=state-tamper' : '?mode=state') : delegated ? '?mode=delegated' : '?mode=https') : ''));
+  const stateMode = internal ? 'internal' : 'state';
+  await page.goto('chrome-extension://' + id + '/index.html' + (fixtureBuild ? (stateOnly ? '?mode=' + stateMode + (tamper ? '-tamper' : noEvidence ? '-no-evidence' : noScriptEvidence ? '-no-script-evidence' : '') : delegated ? '?mode=delegated' : '?mode=https') : ''));
   await page.waitForFunction(() => ['complete', 'failed'].includes(globalThis.fixtureResult?.phase), null, { timeout: 180000 });
   const result = await page.evaluate(() => globalThis.fixtureResult);
   const attacker = await context.newPage();
@@ -101,16 +105,32 @@ try {
     if (stateOnly) {
       assert.equal(result.transport?.requestBoundState, true);
       assert.equal(result.transport?.certificateAvailable, false);
-      assert.equal(result.certificate, 'absent');
       assert.equal(result.beforeHsts, 'absent');
-      assert.equal(result.afterHsts, 'present');
+      if (internal) assert.equal(result.spoofHeader, 'present');
+      if (noEvidence) {
+        assert.equal(result.transport.evidenceSuppressed, true);
+        assert.equal(result.navigation, 'failed');
+        assert.equal(result.securityInfo, 'absent');
+        assert.equal(result.afterHsts, 'absent');
+      } else {
+        assert.equal(result.certificate, 'absent');
+        assert.equal(result.afterHsts, 'present');
+        if (internal) {
+          assert.equal(result.navigation, noScriptEvidence ? 'failed' : 'ok');
+          assert.deepEqual(result.transport.resources, [
+            { url: 'https://example.com/', status: 200 },
+            { url: 'https://example.com/s.js', status: 200 }
+          ]);
+          assert.deepEqual(result.transport.suppressedURLs, noScriptEvidence ? ['https://example.com/s.js'] : []);
+        }
+      }
     }
     if (!delegated && !stateOnly) assert.equal(result.navigation, process.env.OUTPOST_EXPECT_REJECTION === '1' ? 'failed' : 'ok');
     if (process.env.OUTPOST_EXPECT_ERROR) {
       assert.ok(errors.some(message => message.includes('OUTPOST_FIXTURE_CERT_VERIFY_RESULT=' + process.env.OUTPOST_EXPECT_ERROR)),
         'Expected certificate verification error was not observed');
     }
-    if (process.env.OUTPOST_EXPECT_REJECTION !== '1') {
+    if (process.env.OUTPOST_EXPECT_REJECTION !== '1' && !noEvidence) {
       assert.equal(result.httpsTitle, 'Example Domain');
       assert.equal(result.securityInfo, 'present');
       assert.equal(result.httpsDocument.href, 'https://example.com/');

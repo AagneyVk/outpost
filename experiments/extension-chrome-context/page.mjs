@@ -5,11 +5,12 @@ globalThis.fixtureResult = { phase: 'capabilities', crossOriginIsolated,
   suspending: typeof WebAssembly.Suspending,
   promising: typeof WebAssembly.promising };
 try {
-  const mode = new URLSearchParams(location.search).get('mode');
-  const stateOnly = mode === 'state' || mode === 'state-tamper';
+  const mode = new URLSearchParams(location.search).get('mode') || '';
+  const internal = mode.startsWith('internal');
+  const stateOnly = internal || mode === 'state' || mode === 'state-tamper' || mode === 'state-no-evidence';
   const httpsMode = mode === 'https' || mode === 'delegated' || stateOnly;
   let httpsFixture;
-  if (httpsMode) httpsFixture = await (await import('./https-fixture.mjs')).createHttpsFixture({ delegated: mode === 'delegated', stateOnly, tamper: mode === 'state-tamper' });
+  if (httpsMode) httpsFixture = await (await import('./https-fixture.mjs')).createHttpsFixture({ delegated: mode === 'delegated', stateOnly, internal, tamper: mode.endsWith('-tamper'), noEvidence: mode.endsWith('-no-evidence'), noScriptEvidence: mode.endsWith('-no-script-evidence') });
   const gecko = new Gecko({ canvas: document.querySelector('#screen'), width: 800, height: 600,
     wispUrl: 'ws://127.0.0.1:1/wisp/',
     wasm: { url: chrome.runtime.getURL('gecko.wasm.zst'), compressed: true },
@@ -30,12 +31,17 @@ try {
       throw Error('Missing request-bound HTTPS evidence');
     if (stateOnly && !httpsFixture.report.requestBoundState)
       throw Error('Missing request-bound HTTPS state: ' + (httpsFixture.report.bindingError || 'unavailable'));
-    globalThis.fixtureResult.httpsTitle = await gecko.evalChrome('document.title');
+    for (let i = 0; i < 100; i++) {
+      globalThis.fixtureResult.httpsTitle = await gecko.evalChrome('document.title');
+      if (globalThis.fixtureResult.httpsTitle || mode.endsWith('-no-evidence')) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     globalThis.fixtureResult.httpsDocument = JSON.parse(await gecko.evalChrome("JSON.stringify({href:location.href,secureContext:window.isSecureContext})"));
     globalThis.fixtureResult.securityInfo = await gecko.evalChrome('outpost:fixture-security-info');
+    if (internal) globalThis.fixtureResult.spoofHeader = await gecko.evalChrome('outpost:fixture-spoof-header');
+    if (stateOnly) globalThis.fixtureResult.afterHsts = await gecko.evalChrome('outpost:fixture-hsts');
     if (stateOnly && globalThis.fixtureResult.securityInfo === 'present') {
       globalThis.fixtureResult.certificate = await gecko.evalChrome('outpost:fixture-cert-present');
-      globalThis.fixtureResult.afterHsts = await gecko.evalChrome('outpost:fixture-hsts');
     }
     if (mode === 'delegated' && globalThis.fixtureResult.securityInfo === 'present')
       globalThis.fixtureResult.geckoFingerprint = (await gecko.evalChrome('outpost:fixture-cert-fingerprint')).replace(/:/g, '').toUpperCase();

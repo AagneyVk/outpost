@@ -14,6 +14,10 @@ A separate **request-state** mode uses the Chrome debugger's request-specific se
 
 **The request-state engine is unsafe to distribute.** Its Gecko patch accepts a test header that is not itself an authenticated transport. A production design must enforce the extension boundary all the way into the engine, reject any spoofed origin headers, preserve correct Gecko security semantics without pretending missing certificate or certificate-transparency details are available, and pass independent security review. It also relies on Chrome's sensitive `debugger` permission and CDP behavior, which is not a stable browser API; policies or other debuggers may prevent attachment. This is a feasibility result, not a production fix.
 
+An **internal-channel** variant moves this evidence out of HTTP headers into a per-channel Gecko property, which is consumed when the mocked response is processed. The fixture clears any previously inherited property before setting a new one. In Chrome 157, the test loaded `example.com` and its single allowlisted `/s.js` resource with separate verified requests. It deliberately inserted a forged HTTP security header: when the internal property was absent, Gecko rejected the main navigation, reported no security information, and did not record the synthetic HSTS policy. Suppressing only the script's property caused the script request to fail even though the main page loaded. A modified response body was also rejected, and Chrome rejected the expired and self-signed test sites.
+
+**The internal-channel variant is still not production code.** Its fixed-size virtual-file transport is controlled by test code and has no authenticated general-purpose request channel. The property is accessible to privileged Gecko code and is not a substitute for a fully specified trust boundary. The fixture supports two hardcoded URLs, no general redirects, cookies, binary streaming, WebSockets or real sign-ins. It still fabricates an incomplete Gecko security object without a certificate, and its HSTS input is synthetic. The external badssl services or antivirus interception can make tests fail for reasons other than the expected certificate errors; the tests do not treat those failures as success.
+
 **The delegated engine is unsafe to distribute.** Its test-only Gecko patch accepts a fabricated header as proof of transport security and cannot enforce the extension's trust boundary itself. The test depends on Chrome's developer feature flag, a powerful debugger permission, a single serialized request, a synthetic HSTS header and no redirects. It does not establish that this can safely handle real websites or credentials. No such patch is included in the release engine.
 
 Chrome's [webRequest documentation](https://developer.chrome.com/docs/extensions/reference/api/webRequest) describes certificate metadata, but in the tested Chrome 157 a normal listener observed the response while the security details were missing without the experimental `WebRequestSecurityInfo` feature. With the flag, a request-specific DER certificate and matching fingerprint were returned. Without that evidence, the delegated fixture fails closed.
@@ -73,6 +77,23 @@ Remove-Item Env:OUTPOST_STATE_TEST
 ```
 
 The second command checks that deliberately changed response bytes are rejected. Both commands use the debugger permission and a temporary, unpacked extension; neither enables `WebRequestSecurityInfo` or bypasses Chrome's certificate validation.
+
+For the internal-channel variant, overlay `internal-engine/` on the `delegated-engine/` source files when preparing a fresh disposable `/lab` build, then point `OUTPOST_FIXTURE_BUILD` at its output. The builder image is not included. Run the following separately:
+
+```powershell
+$env:OUTPOST_INTERNAL_TEST = '1'
+node experiments/extension-chrome-context/run.mjs
+$env:OUTPOST_STATE_NO_EVIDENCE = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_STATE_NO_EVIDENCE
+$env:OUTPOST_INTERNAL_NO_SCRIPT_EVIDENCE = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_INTERNAL_NO_SCRIPT_EVIDENCE
+$env:OUTPOST_STATE_TAMPER = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_STATE_TAMPER
+Remove-Item Env:OUTPOST_INTERNAL_TEST
+```
 
 ## Work still required
 
