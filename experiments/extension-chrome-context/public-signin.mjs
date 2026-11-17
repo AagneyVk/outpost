@@ -4,7 +4,7 @@ import { validateRedirectBinding } from './redirect-binding.mjs';
 export async function createPublicSignInFixture({ logout = false } = {}) {
   const origin = 'https://practice.expandtesting.com';
   const target = { tabId: (await chrome.tabs.getCurrent()).id };
-  const pending = new Map(), byNetwork = new Map(), requests = new Map(), responses = new Map();
+  const pending = new Map(), requests = new Map(), responses = new Map();
   const extra = new Map(), requestExtra = new Map(), completed = new Set(), failures = new Map();
   const redirects = [], blockResults = [], errors = [];
   const report = { requests: [] };
@@ -37,7 +37,6 @@ export async function createPublicSignInFixture({ logout = false } = {}) {
       if (item.url !== event.request.url || item.method !== event.request.method)
         throw Error('Unexpected or duplicate fixture request');
       item.networkId = event.networkId;
-      byNetwork.set(item.networkId, item);
       const forwarded = headers.filter(([name]) => ![marker, 'cookie', 'origin', 'referer'].includes(name.toLowerCase()))
         .map(([name, value]) => ({ name, value: String(value) }));
       if (item.cookie) forwarded.push({ name: 'Cookie', value: item.cookie });
@@ -73,7 +72,7 @@ export async function createPublicSignInFixture({ logout = false } = {}) {
         credentials: 'omit', cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(15000) }); }
       catch (error) { failure = error; }
       for (let i = 0; i < 200 && (!item.networkId || !extra.has(item.networkId) || !requestExtra.has(item.networkId) ||
-        (failure ? !blockResults.length : !responses.has(item.networkId))); i++) await new Promise(resolve => setTimeout(resolve, 25));
+        (failure ? !blockResults.some(block => block.networkId === item.networkId) : !responses.has(item.networkId))); i++) await new Promise(resolve => setTimeout(resolve, 25));
       if (!item.networkId || !extra.has(item.networkId) || !requestExtra.has(item.networkId)) throw Error('Missing network metadata');
       const meta = extra.get(item.networkId);
       const outgoingHeaders = Object.entries(requestExtra.get(item.networkId));

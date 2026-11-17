@@ -9,8 +9,11 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(dir, '../..');
 const fixtureBuild = process.env.OUTPOST_FIXTURE_BUILD && path.resolve(process.env.OUTPOST_FIXTURE_BUILD);
 const directLogout = process.env.OUTPOST_PUBLIC_DEMO_LOGOUT_DIRECT === '1';
-const publicLogout = directLogout || process.env.OUTPOST_PUBLIC_DEMO_LOGOUT === '1';
-const publicDemo = publicLogout || process.env.OUTPOST_PUBLIC_DEMO_FORM === '1';
+const pointerLogout = process.env.OUTPOST_PUBLIC_DEMO_LOGOUT_POINTER === '1';
+const publicPortable = process.env.OUTPOST_PUBLIC_DEMO_PORTABLE === '1';
+const publicLogout = directLogout || pointerLogout || process.env.OUTPOST_PUBLIC_DEMO_LOGOUT === '1';
+const publicDemo = publicLogout || publicPortable || process.env.OUTPOST_PUBLIC_DEMO_FORM === '1';
+if (publicPortable && publicLogout) throw Error('Choose a single public demo mode');
 const wrongSignIn = process.env.OUTPOST_LOCAL_SIGNIN_WRONG === '1';
 const formSignIn = wrongSignIn || process.env.OUTPOST_LOCAL_SIGNIN_FORM === '1';
 const signInTest = formSignIn || process.env.OUTPOST_LOCAL_SIGNIN === '1';
@@ -27,10 +30,11 @@ if (publicDemo && (!fixtureBuild || stateOnly || delegated || signInTest)) throw
 if (delegated && !fixtureBuild) throw Error('Delegated test requires its matching test engine');
 const addon = await fs.mkdtemp(path.join(dir, 'temporary-addon-'));
 const profile = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
-let context, server;
+let context, restoreContext, restoreProfile, server;
 try {
   for (const name of ['index.html', 'page.mjs', 'https-fixture.mjs', 'response-binding.mjs', 'local-signin.mjs', 'public-signin.mjs'])
     await fs.copyFile(path.join(dir, name), path.join(addon, name));
+  await fs.copyFile(path.join(root, 'public/portable.js'), path.join(addon, 'portable.js'));
   await fs.copyFile(path.join(root, 'experiments/extension-request-isolation/redirect-binding.mjs'), path.join(addon, 'redirect-binding.mjs'));
   const manifest = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8'));
   if (fixtureBuild) {
@@ -101,9 +105,18 @@ try {
   page.on('pageerror', error => errors.push(String(error)));
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text().slice(0, 500)); });
   const stateMode = internal ? 'internal' : 'state';
-  const query = publicDemo ? (directLogout ? '?mode=public-demo-logout-direct' : publicLogout ? '?mode=public-demo-logout' : '?mode=public-demo') : signInTest ? '?' + new URLSearchParams({ mode: wrongSignIn ? 'signin-form-bad' : formSignIn ? 'signin-form' : 'signin', origin: fixtureOrigin }) :
+  const query = publicDemo ? (directLogout ? '?mode=public-demo-logout-direct' : pointerLogout ? '?mode=public-demo-logout-pointer' : publicLogout ? '?mode=public-demo-logout' : publicPortable ? '?mode=public-demo-save' : '?mode=public-demo') : signInTest ? '?' + new URLSearchParams({ mode: wrongSignIn ? 'signin-form-bad' : formSignIn ? 'signin-form' : 'signin', origin: fixtureOrigin }) :
     fixtureBuild ? (stateOnly ? '?mode=' + stateMode + (tamper ? '-tamper' : noEvidence ? '-no-evidence' : noScriptEvidence ? '-no-script-evidence' : '') : delegated ? '?mode=delegated' : '?mode=https') : '';
   await page.goto('chrome-extension://' + id + '/index.html' + query);
+  if (pointerLogout) {
+    await page.waitForFunction(() => ['awaiting-logout-pointer', 'failed'].includes(globalThis.fixtureResult?.phase), null, { timeout: 180000 });
+    const point = await page.evaluate(() => globalThis.fixtureResult.logoutRect);
+    assert.ok(point && point.x >= 0 && point.y >= 0 && point.x < point.width && point.y < point.height, 'logout link must be visible');
+    const box = await page.locator('#screen').boundingBox();
+    assert.ok(box, 'fixture canvas must be visible');
+    await page.mouse.click(box.x + point.x * box.width / point.width, box.y + point.y * box.height / point.height);
+    await page.evaluate(() => { globalThis.fixtureResult.phase = 'logout-pointer-sent'; });
+  }
   await page.waitForFunction(() => ['complete', 'failed'].includes(globalThis.fixtureResult?.phase), null, { timeout: 180000 });
   const result = await page.evaluate(() => globalThis.fixtureResult);
   const attacker = await context.newPage();
@@ -154,6 +167,33 @@ try {
     }
     const hostCookies = await context.cookies('https://practice.expandtesting.com');
     assert.deepEqual(hostCookies.map(cookie => cookie.name), ['host_canary']);
+    if (publicPortable) {
+      assert.equal(result.snapshotEncrypted, true);
+      const encrypted = await page.evaluate(() => globalThis.fixtureEncrypted);
+      assert.ok(Array.isArray(encrypted) && encrypted.length > 16 && encrypted.length < 16384, 'encrypted snapshot required');
+      restoreProfile = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
+      restoreContext = await chromium.launchPersistentContext(restoreProfile, {
+        ...(process.env.OUTPOST_CHROME ? { executablePath: process.env.OUTPOST_CHROME } : { channel: 'chrome' }),
+        headless: true, ignoreDefaultArgs: ['--disable-extensions'], args: ['--enable-unsafe-extension-debugging']
+      });
+      await restoreContext.addCookies([{ name: 'host_canary', value: 'must-not-leak', domain: 'practice.expandtesting.com', path: '/', secure: true, sameSite: 'None' }]);
+      const restoreCdp = await restoreContext.browser().newBrowserCDPSession();
+      const restoredId = (await restoreCdp.send('Extensions.loadUnpacked', { path: addon })).id;
+      await restoreCdp.detach();
+      await restoreContext.addInitScript(seed => { globalThis.fixtureSeed = seed; }, encrypted);
+      const restoredPage = await restoreContext.newPage();
+      await restoredPage.goto('chrome-extension://' + restoredId + '/index.html?mode=public-demo-restore');
+      await restoredPage.waitForFunction(() => ['complete', 'failed'].includes(globalThis.fixtureResult?.phase), null, { timeout: 180000 });
+      const restored = await restoredPage.evaluate(() => globalThis.fixtureResult);
+      console.log(JSON.stringify({ portableRestore: restored }, null, 2));
+      assert.equal(restored.phase, 'complete');
+      assert.deepEqual(restored.restored, { wrongPasswordRejected: true, tamperingRejected: true, freshProfile: true, restore: 'ok', attributesRoundTripped: true, duplicateRejected: true });
+      assert.deepEqual(restored.restoredDocument, { href: 'https://practice.expandtesting.com/secure', logout: true });
+      assert.deepEqual(restored.publicErrors, []);
+      assert.deepEqual(restored.publicTransport.requests.map(item => [item.path, item.method, item.status, item.secure, item.hostCookieSent]),
+        [['/secure', 'GET', 200, true, false]]);
+      assert.deepEqual((await restoreContext.cookies('https://practice.expandtesting.com')).map(cookie => cookie.name), ['host_canary']);
+    }
   }
   if (signInTest) {
     assert.deepEqual(result.signInErrors, []);
@@ -223,9 +263,10 @@ try {
   assert.notEqual(boundary.messaging, 'accepted');
   assert.equal(boundary.read, 'rejected');
 } finally {
+  if (restoreContext) await restoreContext.close();
   if (context) await context.close();
   if (server) await new Promise(resolve => server.close(resolve));
-  for (const temporary of [addon, profile]) {
+  for (const temporary of [addon, profile, ...(restoreProfile ? [restoreProfile] : [])]) {
     if (path.dirname(temporary) !== dir) throw Error('Invalid temporary path');
     await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }

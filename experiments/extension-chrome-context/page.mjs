@@ -7,8 +7,11 @@ globalThis.fixtureResult = { phase: 'capabilities', crossOriginIsolated,
 try {
   const mode = new URLSearchParams(location.search).get('mode') || '';
   const directLogout = mode === 'public-demo-logout-direct';
-  const publicLogout = mode === 'public-demo-logout' || directLogout;
-  const publicDemo = mode === 'public-demo' || publicLogout;
+  const pointerLogout = mode === 'public-demo-logout-pointer';
+  const publicLogout = mode === 'public-demo-logout' || directLogout || pointerLogout;
+  const publicSave = mode === 'public-demo-save';
+  const publicRestore = mode === 'public-demo-restore';
+  const publicDemo = mode === 'public-demo' || publicLogout || publicSave || publicRestore;
   const signIn = mode === 'signin' || mode === 'signin-form' || mode === 'signin-form-bad';
   const formSignIn = mode === 'signin-form' || mode === 'signin-form-bad';
   const internal = mode.startsWith('internal');
@@ -33,6 +36,41 @@ try {
   globalThis.fixtureResult.document = await gecko.evalChrome('document.title');
   if (publicDemo) {
     if (await gecko.evalChrome('outpost:fixture-install') !== 'ok') throw Error('Fixture install failed');
+    if (publicRestore) {
+      const { unseal } = await import('./portable.js');
+      const encrypted = Uint8Array.from(globalThis.fixtureSeed || []);
+      if (!encrypted.length) throw Error('Encrypted fixture snapshot missing');
+      let wrongPasswordRejected = false, tamperingRejected = false;
+      try { await unseal(new Blob([encrypted]), 'incorrect-password-1!', 'a'.repeat(64)); } catch { wrongPasswordRejected = true; }
+      const damaged = encrypted.slice(); damaged[damaged.length - 1] ^= 1;
+      try { await unseal(new Blob([damaged]), 'synthetic-passphrase-1!', 'a'.repeat(64)); } catch { tamperingRejected = true; }
+      const before = await gecko.evalChrome('outpost:fixture-cookies-save');
+      if (before) throw Error('Fresh fixture unexpectedly contains demo cookies');
+      const plaintext = await unseal(new Blob([encrypted]), 'synthetic-passphrase-1!', 'a'.repeat(64));
+      let restore, attributesRoundTripped = false, duplicateRejected = false;
+      try {
+        const snapshot = new TextDecoder().decode(plaintext);
+        const normalize = value => value.trim().split('\n').sort().join('\n');
+        restore = await gecko.evalChrome('outpost:fixture-cookies-restore:' + snapshot);
+        const roundTrip = await gecko.evalChrome('outpost:fixture-cookies-save');
+        attributesRoundTripped = normalize(snapshot) === normalize(roundTrip);
+        const duplicate = await gecko.evalChrome('outpost:fixture-cookies-restore:' + snapshot);
+        const afterDuplicate = await gecko.evalChrome('outpost:fixture-cookies-save');
+        duplicateRejected = duplicate !== 'ok' && normalize(roundTrip) === normalize(afterDuplicate);
+      }
+      finally { plaintext.fill(0); }
+      if (restore !== 'ok') throw Error('Synthetic cookie restore failed');
+      globalThis.fixtureResult.restored = { wrongPasswordRejected, tamperingRejected, freshProfile: !before, restore, attributesRoundTripped, duplicateRejected };
+      await gecko.load('https://practice.expandtesting.com/secure');
+      for (let i = 0; i < 120; i++) {
+        globalThis.fixtureResult.restoredDocument = JSON.parse(await gecko.evalChrome("JSON.stringify({href:location.href,logout:!!document.querySelector('a[href*=logout]')})"));
+        if (publicFixture.report.requests.length >= 1 && globalThis.fixtureResult.restoredDocument.href === 'https://practice.expandtesting.com/secure' && globalThis.fixtureResult.restoredDocument.logout) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      globalThis.fixtureResult.publicTransport = publicFixture.report;
+      globalThis.fixtureResult.publicErrors = publicFixture.errors;
+      await publicFixture.close();
+    } else {
     await gecko.load('https://practice.expandtesting.com/login');
     let ready = false;
     for (let i = 0; i < 120; i++) {
@@ -48,13 +86,29 @@ try {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     globalThis.fixtureResult.publicSecurityInfo = await gecko.evalChrome('outpost:fixture-security-info');
+    if (publicSave) {
+      if (!globalThis.fixtureResult.publicDocument.success || !globalThis.fixtureResult.publicDocument.logout) throw Error('Demo sign-in failed before snapshot');
+      const serialized = await gecko.evalChrome('outpost:fixture-cookies-save');
+      if (!serialized) throw Error('Synthetic demo cookie snapshot failed');
+      const { seal } = await import('./portable.js');
+      const plaintext = new TextEncoder().encode(serialized);
+      try { globalThis.fixtureEncrypted = Array.from(new Uint8Array(await (await seal(plaintext, 'synthetic-passphrase-1!', 'a'.repeat(64))).arrayBuffer())); }
+      finally { plaintext.fill(0); }
+      globalThis.fixtureResult.snapshotEncrypted = true;
+    }
     globalThis.fixtureResult.publicTransport = publicFixture.report;
     globalThis.fixtureResult.publicErrors = publicFixture.errors;
     if (publicLogout) {
       if (!globalThis.fixtureResult.publicDocument.success || !globalThis.fixtureResult.publicDocument.logout)
         throw Error('Public demo did not sign in before logout');
       globalThis.fixtureResult.logoutLink = JSON.parse(await gecko.evalChrome("JSON.stringify({href:document.querySelector('a[href*=logout]').href,target:document.querySelector('a[href*=logout]').target,outerHTML:document.querySelector('a[href*=logout]').outerHTML})"));
-      if (directLogout) await gecko.load(globalThis.fixtureResult.logoutLink.href);
+      if (pointerLogout) {
+        globalThis.fixtureResult.logoutRect = JSON.parse(await gecko.evalChrome("(() => {const a=document.querySelector('a[href*=logout]'); a.scrollIntoView({block:'center'}); const r=a.getBoundingClientRect(); return JSON.stringify({x:r.x+r.width/2,y:r.y+r.height/2,width:innerWidth,height:innerHeight});})()"));
+        globalThis.fixtureResult.phase = 'awaiting-logout-pointer';
+        for (let i = 0; i < 200 && globalThis.fixtureResult.phase === 'awaiting-logout-pointer'; i++)
+          await new Promise(resolve => setTimeout(resolve, 50));
+        if (globalThis.fixtureResult.phase !== 'logout-pointer-sent') throw Error('Pointer test did not send a click');
+      } else if (directLogout) await gecko.load(globalThis.fixtureResult.logoutLink.href);
       else await gecko.evalChrome("document.querySelector('a[href*=logout]').click(); 'clicked'");
       for (let i = 0; i < 120; i++) {
         globalThis.fixtureResult.afterLogout = JSON.parse(await gecko.evalChrome("JSON.stringify({href:location.href,loginForm:!!document.querySelector('[name=username]')})"));
@@ -73,6 +127,7 @@ try {
     globalThis.fixtureResult.publicTransport = publicFixture.report;
     globalThis.fixtureResult.publicErrors = publicFixture.errors;
     await publicFixture.close();
+    }
   }
   if (signIn) {
     if (await gecko.evalChrome('outpost:fixture-install') !== 'ok') throw Error('Fixture install failed');

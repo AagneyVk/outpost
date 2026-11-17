@@ -35,8 +35,8 @@ const listener = (source, method, event) => {
       } else {
         blocked.push(event.request.url);
         chrome.debugger.sendCommand(target, 'Fetch.failRequest', { requestId: event.requestId, errorReason: 'Aborted' })
-          .then(() => blockResults.push({ url: event.request.url, ok: true }), error => {
-            blockResults.push({ url: event.request.url, ok: false }); commandErrors.push(String(error));
+          .then(() => blockResults.push({ url: event.request.url, networkId: event.networkId, ok: true }), error => {
+            blockResults.push({ url: event.request.url, networkId: event.networkId, ok: false }); commandErrors.push(String(error));
           });
       }
       return;

@@ -49,7 +49,7 @@ try {
   if (gate) {
     assert.equal(result.type, 'TypeError');
     assert.equal(result.blocked.length, 1);
-    assert.deepEqual(result.blockResults, [{ url: result.blocked[0], ok: true }]);
+    assert.deepEqual(result.blockResults, [{ url: result.blocked[0], networkId: result.events[0].id, ok: true }]);
     assert.equal(result.redirects.length, 1);
     assert.equal(result.redirects[0].id, result.events[0].id);
     assert.equal(result.redirects[0].from, local ? 'http://127.0.0.1:' + server.address().port + '/start' : 'https://practice.expandtesting.com/secure');

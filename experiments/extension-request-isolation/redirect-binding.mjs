@@ -13,7 +13,7 @@ export function validateRedirectBinding({ initialURL, requestId, redirects, extr
     throw Error('Redirect headers do not match');
   const destination = new URL(extra.location, initialURL);
   if (!['http:', 'https:'].includes(destination.protocol) || destination.username || destination.password ||
-      destination.href !== redirect.to || !blocked.ok || blocked.url !== redirect.to)
+      destination.href !== redirect.to || blocked.networkId !== requestId || blocked.ok !== true || blocked.url !== redirect.to)
     throw Error('Redirect destination was not safely blocked');
   return { from: redirect.from, to: redirect.to, status: redirect.status, protocol: redirect.protocol };
 }
