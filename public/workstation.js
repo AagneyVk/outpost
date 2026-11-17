@@ -23,7 +23,7 @@ function startBootTimer(){
  bootTimer=setInterval(tick,250);
 }
 window.serialText='';
-function status(text){$('status').textContent=text;$('progress').textContent=text;}
+function status(text){$('status').textContent=text+(manifest?.offline?' · Offline':'');$('progress').textContent=text;}
 function message(text){$('message').textContent=text;}
 function controls(enabled){for(const id of ['files','terminal','save','export','lock'])$(id).disabled=!enabled;if(rfb)rfb.viewOnly=!enabled||!!document.querySelector('dialog[open]');}
 async function openSerialTerminal(){
@@ -115,7 +115,7 @@ async function boot(raw){
   &&(await fetch('/vnc32/tools-initrd.gz',{method:'HEAD'})).ok;
  const bootImage=lean?{bzimage:{url:manifest.filesystem+'/rootfs/'+toolsKernel},initrd:{url:'/vnc32/tools-initrd.gz'}}:{bzimage_initrd_from_filesystem:true};
  const netDevice=manifest.offline?undefined:{relay_url:location.origin.replace(/^http/,'wisp')+'/network/',type:'virtio'};
- vm=new V86({wasm_path:'vendor/v86.wasm',memory_size:1024*1024*1024,vga_memory_size:16*1024*1024,uart1:toolsOnly,disable_keyboard:true,disable_mouse:true,net_device:netDevice,bios:{url:'vendor/seabios.bin'},vga_bios:{url:'vendor/vgabios.bin'},filesystem:{baseurl:manifest.filesystem+'/rootfs/',basefs:manifest.filesystem+'/fs.json'},...bootImage,cmdline:'init=/sbin/outpost-init rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable console=ttyS0,115200',autostart:false});
+ vm=new V86({wasm_path:'vendor/v86.wasm',memory_size:1024*1024*1024,vga_memory_size:16*1024*1024,uart1:toolsOnly,disable_keyboard:true,disable_mouse:true,disable_speaker:toolsOnly,net_device:netDevice,bios:{url:'vendor/seabios.bin'},vga_bios:{url:'vendor/vgabios.bin'},filesystem:{baseurl:manifest.filesystem+'/rootfs/',basefs:manifest.filesystem+'/fs.json'},...bootImage,cmdline:'init=/sbin/outpost-init rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable console=ttyS0,115200',autostart:false});
  window.vm=vm;
  vm.add_listener('serial0-output-byte',b=>{window.serialText+=String.fromCharCode(b);if(serialText.length>250000)window.serialText=serialText.slice(-200000);});
  const log=setInterval(()=>{$('serial').value=serialText;},500);vm.add_listener('emulator-stopped',()=>clearInterval(log));

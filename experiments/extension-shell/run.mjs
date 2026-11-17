@@ -11,6 +11,7 @@ const flag = process.argv.indexOf('--addon');
 if (flag >= 0 && !process.argv[flag + 1]) throw Error('--addon requires a directory path');
 const addon = path.resolve(flag >= 0 ? process.argv[flag + 1] : path.join(root, '../outpost-extension-preview'));
 const manifest = JSON.parse(await fs.readFile(path.join(addon, 'manifest.json'), 'utf8'));
+const linuxIncluded = await fs.access(path.join(addon, 'build.json')).then(() => true, () => false);
 assert.equal(manifest.manifest_version, 3);
 assert.equal(manifest.permissions, undefined);
 assert.equal(manifest.host_permissions, undefined);
@@ -61,7 +62,7 @@ try {
   await page.goto('chrome-extension://' + id + '/gecko-lab/index.html');
   assert.equal(await page.evaluate(() => crossOriginIsolated), true);
   assert.match(await page.locator('#welcome').innerText(), /browsing uses the selected Wisp relay/i);
-  assert.match(await page.locator('#welcome').innerText(), /Linux workspace is not included/i);
+  assert.match(await page.locator('#welcome').innerText(), linuxIncluded ? /Linux terminal is an offline preview/i : /Linux workspace is not included/i);
   assert.equal(await page.locator('#relay-url').inputValue(), 'wss://wisp.mercurywork.shop/');
   await page.getByText('Network settings', { exact: true }).click();
   await page.locator('#relay-url').fill('');

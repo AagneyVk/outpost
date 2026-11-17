@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { collectBlobs } from './linux-runtime.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -21,4 +22,15 @@ test('extension builder refuses to overwrite an existing directory', async () =>
     if (path.dirname(temporary) !== here) throw Error('Invalid temporary path');
     await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
+});
+
+test('Linux runtime manifest accepts only content-addressed regular-file blobs', () => {
+  const file = name => ['file', 1, 0, 0x8000, 0, 0, name];
+  const directory = children => ['dir', 0, 0, 0x4000, 0, 0, children];
+  assert.deepEqual(collectBlobs({ fsroot: [directory([file('0123456789.bin'), file('0123456789.bin')])] }), ['0123456789.bin']);
+  for (const bad of ['../0123456789.bin', '0123456789.bin/../evil', '012345678X.bin', '0123456789']) {
+    assert.throws(() => collectBlobs({ fsroot: [file(bad)] }), /Invalid Linux blob name/);
+  }
+  assert.throws(() => collectBlobs({ fsroot: [directory('bad')] }), /Invalid Linux directory/);
+  assert.throws(() => collectBlobs({}), /Invalid Linux filesystem manifest/);
 });

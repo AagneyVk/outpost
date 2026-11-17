@@ -1,0 +1,12 @@
+# Release gates for the extension
+
+This build is a local preview. The following must be resolved before presenting it as a production extension:
+
+1. Establish the exact source, build recipe, dependency inventory and redistribution obligations of the Gecko and Linux binaries, including firmware and guest packages. The runtime checks in the builder detect mismatches in a known local image; they do not prove provenance or satisfy licence obligations.
+2. Review isolation and privacy for untrusted pages, extension storage, the emulator and the guest. Include independent security review and vulnerability/update handling; synthetic host-cookie and resource-access checks are not a substitute. A borrowed computer controlled by an attacker can capture user input or plaintext data.
+3. Test real-world sign-ins, redirects, modern site features and recovery across supported Chrome versions and operating systems. Existing sign-in tests use synthetic fixtures. Check accessibility, performance, interruption and data recovery on constrained devices.
+4. Choose and operate a relay with a reliability and abuse-response plan. The current Wisp default is an independent public demo, not a service controlled by OUTPOST. It sees destination metadata and unencrypted HTTP. The Linux terminal in this build has no network connection.
+5. Establish stable extension identity, safe updates and a migration path from existing profile storage. Test packaging, size, permissions, privacy disclosures and Chrome Web Store submission. Chrome's [Manifest V3 policy](https://developer.chrome.com/docs/webstore/program-policies/mv3-requirements) restricts remotely sourced logic and provides a limited exception for contexts isolated from extension APIs. Review how the Gecko/VM execution model is classified; acceptance cannot be inferred from local loading.
+6. Publish verified binary notices and sources as required, then complete a Chrome Web Store review or another supported distribution process. No signing key or store submission is included in this preview.
+
+Do not use the experimental direct-network bridge or synthetic native-cache research components in a release. Their TLS/security state, general request handling, isolation and failure behavior are not ready for users.
