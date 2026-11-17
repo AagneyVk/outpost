@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "OUTPOST Browser Preview",
+  "version": "0.1.0",
+  "description": "A local OUTPOST browser preview using a Wisp relay.",
+  "action": { "default_title": "Open OUTPOST Browser" },
+  "background": { "service_worker": "background.js" },
+  "cross_origin_opener_policy": { "value": "same-origin" },
+  "cross_origin_embedder_policy": { "value": "require-corp" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' data: ws: wss:"
+  }
+}

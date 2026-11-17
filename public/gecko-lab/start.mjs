@@ -2,6 +2,7 @@ import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profil
 import { captureDrag } from './drag-capture.mjs';
 import { optimizeWheelQueue } from './wheel-queue.mjs';
 import { watchEngine } from './engine-watchdog.mjs';
+import { isCertificateError } from './certificate-errors.mjs';
 
 const start = document.querySelector('#start');
 const startError = document.querySelector('#start-error');
@@ -419,7 +420,7 @@ function reportEngineMessage(message) {
     activeTab.position = position;
     saveTabs();
     finishNavigation('Loaded ' + host);
-  } else if (result[2] === '0x805a1ff3') {
+  } else if (isCertificateError(result[2])) {
     finishNavigation('Gecko could not verify the HTTPS certificate for ' + host + '.');
   } else {
     finishNavigation('Could not load ' + host + ' (' + result[2] + ').');
