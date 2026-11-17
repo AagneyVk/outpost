@@ -6,9 +6,10 @@ globalThis.fixtureResult = { phase: 'capabilities', crossOriginIsolated,
   promising: typeof WebAssembly.promising };
 try {
   const mode = new URLSearchParams(location.search).get('mode');
-  const httpsMode = mode === 'https' || mode === 'delegated';
+  const stateOnly = mode === 'state' || mode === 'state-tamper';
+  const httpsMode = mode === 'https' || mode === 'delegated' || stateOnly;
   let httpsFixture;
-  if (httpsMode) httpsFixture = await (await import('./https-fixture.mjs')).createHttpsFixture({ delegated: mode === 'delegated' });
+  if (httpsMode) httpsFixture = await (await import('./https-fixture.mjs')).createHttpsFixture({ delegated: mode === 'delegated', stateOnly, tamper: mode === 'state-tamper' });
   const gecko = new Gecko({ canvas: document.querySelector('#screen'), width: 800, height: 600,
     wispUrl: 'ws://127.0.0.1:1/wisp/',
     wasm: { url: chrome.runtime.getURL('gecko.wasm.zst'), compressed: true },
@@ -22,13 +23,20 @@ try {
   globalThis.fixtureResult.document = await gecko.evalChrome('document.title');
   if (httpsMode) {
     if (await gecko.evalChrome('outpost:fixture-install') !== 'ok') throw Error('Fixture install failed');
+    if (stateOnly) globalThis.fixtureResult.beforeHsts = await gecko.evalChrome('outpost:fixture-hsts');
     await gecko.load('https://example.com/');
     globalThis.fixtureResult.navigation = await gecko.evalChrome('outpost:fixture-nav-status');
     if (mode === 'delegated' && !httpsFixture.report.requestBoundCertificate)
       throw Error('Missing request-bound HTTPS evidence');
+    if (stateOnly && !httpsFixture.report.requestBoundState)
+      throw Error('Missing request-bound HTTPS state: ' + (httpsFixture.report.bindingError || 'unavailable'));
     globalThis.fixtureResult.httpsTitle = await gecko.evalChrome('document.title');
     globalThis.fixtureResult.httpsDocument = JSON.parse(await gecko.evalChrome("JSON.stringify({href:location.href,secureContext:window.isSecureContext})"));
     globalThis.fixtureResult.securityInfo = await gecko.evalChrome('outpost:fixture-security-info');
+    if (stateOnly && globalThis.fixtureResult.securityInfo === 'present') {
+      globalThis.fixtureResult.certificate = await gecko.evalChrome('outpost:fixture-cert-present');
+      globalThis.fixtureResult.afterHsts = await gecko.evalChrome('outpost:fixture-hsts');
+    }
     if (mode === 'delegated' && globalThis.fixtureResult.securityInfo === 'present')
       globalThis.fixtureResult.geckoFingerprint = (await gecko.evalChrome('outpost:fixture-cert-fingerprint')).replace(/:/g, '').toUpperCase();
     globalThis.fixtureResult.transport = httpsFixture.report;

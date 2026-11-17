@@ -10,6 +10,10 @@ The optional HTTPS mode uses a separately patched research Gecko build and an ex
 
 There is also an experimental **delegated trust** mode. It keeps the fixture engine and network code within the extension page and accepts Chrome's TLS decision and request-specific `webRequest` certificate data. In the controlled Chrome 157 test, it displayed the top-level example.com document even when Chrome trusted the Norton inspection root, and the Gecko leaf fingerprint matched Chrome's request event. Chrome rejected the expired and self-signed badssl sites. The synthetic test intentionally does not load all page resources: its navigation-status flag reports failure when a subresource is blocked, so this is not a successful full-page compatibility test.
 
+A separate **request-state** mode uses the Chrome debugger's request-specific security details and matching response bytes instead of asking for certificate DER. On the tested Chrome 157, it displayed the same top-level document without the certificate feature flag, including when Chrome trusted the Norton inspection root. Gecko exposed a synthetic security object with no server certificate; the test does not claim certificate details or a complete native TLS state. Chrome rejected the expired and self-signed test sites, and changing the captured response body caused the fixture to fail closed. A synthetic HSTS header was recorded; this does not establish handling of a real HSTS header. The test only allows one anonymous fixed URL, blocks its subresource, and does not demonstrate a complete page or browser.
+
+**The request-state engine is unsafe to distribute.** Its Gecko patch accepts a test header that is not itself an authenticated transport. A production design must enforce the extension boundary all the way into the engine, reject any spoofed origin headers, preserve correct Gecko security semantics without pretending missing certificate or certificate-transparency details are available, and pass independent security review. It also relies on Chrome's sensitive `debugger` permission and CDP behavior, which is not a stable browser API; policies or other debuggers may prevent attachment. This is a feasibility result, not a production fix.
+
 **The delegated engine is unsafe to distribute.** Its test-only Gecko patch accepts a fabricated header as proof of transport security and cannot enforce the extension's trust boundary itself. The test depends on Chrome's developer feature flag, a powerful debugger permission, a single serialized request, a synthetic HSTS header and no redirects. It does not establish that this can safely handle real websites or credentials. No such patch is included in the release engine.
 
 Chrome's [webRequest documentation](https://developer.chrome.com/docs/extensions/reference/api/webRequest) describes certificate metadata, but in the tested Chrome 157 a normal listener observed the response while the security details were missing without the experimental `WebRequestSecurityInfo` feature. With the flag, a request-specific DER certificate and matching fingerprint were returned. Without that evidence, the delegated fixture fails closed.
@@ -56,6 +60,19 @@ Remove-Item Env:OUTPOST_DELEGATED_TEST
 ```
 
 The first run confirms it fails closed without the metadata. The second runs Chrome with a developer flag for research only; it must not be presented as an ordinary user setup. The engine's `navigation` field can be `failed` because the fixture blocks subresources even when the main example.com document is displayed.
+
+For request-state mode, build a second disposable engine with the files in `state-engine/` overlaid on the `delegated-engine/` build sources, then set `OUTPOST_FIXTURE_BUILD` to that engine's output:
+
+```powershell
+$env:OUTPOST_STATE_TEST = '1'
+node experiments/extension-chrome-context/run.mjs
+$env:OUTPOST_STATE_TAMPER = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_STATE_TAMPER
+Remove-Item Env:OUTPOST_STATE_TEST
+```
+
+The second command checks that deliberately changed response bytes are rejected. Both commands use the debugger permission and a temporary, unpacked extension; neither enables `WebRequestSecurityInfo` or bypasses Chrome's certificate validation.
 
 ## Work still required
 

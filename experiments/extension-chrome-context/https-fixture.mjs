@@ -1,8 +1,8 @@
 // Disposable fixed-origin test. Not a general network bridge.
 import { validateResponseBinding } from './response-binding.mjs';
-export async function createHttpsFixture({ delegated = false } = {}) {
+export async function createHttpsFixture({ delegated = false, stateOnly = false, tamper = false } = {}) {
   const target = { tabId: (await chrome.tabs.getCurrent()).id };
-  const requests = new Map(), responses = new Map(), failures = new Map(), redirects = new Set();
+  const requests = new Map(), responses = new Map(), failures = new Map(), redirects = new Set(), completed = new Set();
   const report = { requested: 0 };
   const certEvents = [];
   const certListener = details => {
@@ -18,9 +18,16 @@ export async function createHttpsFixture({ delegated = false } = {}) {
     }
     if (method === 'Network.responseReceived') responses.set(params.requestId, params.response);
     if (method === 'Network.loadingFailed') failures.set(params.requestId, params.errorText);
+    if (method === 'Network.loadingFinished') completed.add(params.requestId);
   };
   chrome.debugger.onEvent.addListener(listener);
   await chrome.debugger.attach(target, '1.3');
+  // Passive capability probe only; never enable certificate overrides.
+  try {
+    await chrome.debugger.sendCommand(target, 'Security.enable');
+    report.securityDomainAvailable = true;
+    await chrome.debugger.sendCommand(target, 'Security.disable');
+  } catch { report.securityDomainAvailable = false; }
   await chrome.debugger.sendCommand(target, 'Network.enable');
   async function rejectedWith(url, code) {
     try { await fetch(url, { credentials: 'omit', cache: 'no-store',
@@ -45,13 +52,26 @@ export async function createHttpsFixture({ delegated = false } = {}) {
       const matches = [...responses].filter(([id, item]) => requests.get(id) === url && item.url === url);
       if (matches.length !== 1) throw Error('No unique request-bound response');
       const [[requestId, event]] = matches;
+      for (let i = 0; i < 40 && !completed.has(requestId) && !failures.has(requestId); i++)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      if (!completed.has(requestId)) throw Error('Request did not complete successfully');
       const captured = await chrome.debugger.sendCommand(target, 'Network.getResponseBody', { requestId });
       const capturedBody = captured.base64Encoded ? Uint8Array.from(atob(captured.body), c => c.charCodeAt(0)) : new TextEncoder().encode(captured.body);
-      validateResponseBinding({ url, status: response.status, finalURL: response.url,
-        body: bodyBytes, capturedBody, requests, responses, failures, redirects });
+      if (tamper && bodyBytes.length) bodyBytes[0] ^= 1;
+      try {
+        validateResponseBinding({ url, status: response.status, finalURL: response.url,
+          body: bodyBytes, capturedBody, requests, responses, failures, redirects });
+      } catch (error) {
+        report.bindingError = String(error?.message || error);
+        throw error;
+      }
       const body = new TextDecoder('utf-8', { fatal: true }).decode(bodyBytes);
       let chain;
-      if (delegated) {
+      if (stateOnly) {
+        chain = [];
+        report.requestBoundState = true;
+        report.certificateAvailable = false;
+      } else if (delegated) {
         for (let i = 0; i < 40 && !certEvents.length; i++) await new Promise(resolve => setTimeout(resolve, 25));
         if (certEvents.length !== 1 || certEvents[0].statusCode !== response.status ||
             certEvents[0].securityInfo?.state !== 'secure') throw Error('No unique request-bound secure certificate');
@@ -80,7 +100,7 @@ export async function createHttpsFixture({ delegated = false } = {}) {
       // getCertificate is origin-keyed, not request-keyed; this fixture does
       // not establish request-bound chain evidence. Gecko must verify it.
       const wire = [String(response.status), '', '', '', 'text/html; charset=utf-8',
-        [delegated ? 'v2' : 'v1', protocol, ...chain].join(':'), 'max-age=600', body].join('\n');
+        [stateOnly ? 'v3' : delegated ? 'v2' : 'v1', protocol, ...chain].join(':'), 'max-age=600', body].join('\n');
       const bytes = new TextEncoder().encode(wire);
       if (bytes.length >= 262144) throw Error('Fixture response too large');
       const padded = new Uint8Array(262144);

@@ -9,6 +9,10 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(dir, '../..');
 const fixtureBuild = process.env.OUTPOST_FIXTURE_BUILD && path.resolve(process.env.OUTPOST_FIXTURE_BUILD);
 const delegated = process.env.OUTPOST_DELEGATED_TEST === '1';
+const stateOnly = process.env.OUTPOST_STATE_TEST === '1';
+const tamper = process.env.OUTPOST_STATE_TAMPER === '1';
+if (delegated && stateOnly || tamper && !stateOnly) throw Error('Choose one HTTPS fixture mode');
+if (stateOnly && !fixtureBuild) throw Error('State test requires its matching test engine');
 if (delegated && !fixtureBuild) throw Error('Delegated test requires its matching test engine');
 const addon = await fs.mkdtemp(path.join(dir, 'temporary-addon-'));
 const profile = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
@@ -55,7 +59,7 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(String(error)));
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text().slice(0, 500)); });
-  await page.goto('chrome-extension://' + id + '/index.html' + (fixtureBuild ? (delegated ? '?mode=delegated' : '?mode=https') : ''));
+  await page.goto('chrome-extension://' + id + '/index.html' + (fixtureBuild ? (stateOnly ? (tamper ? '?mode=state-tamper' : '?mode=state') : delegated ? '?mode=delegated' : '?mode=https') : ''));
   await page.waitForFunction(() => ['complete', 'failed'].includes(globalThis.fixtureResult?.phase), null, { timeout: 180000 });
   const result = await page.evaluate(() => globalThis.fixtureResult);
   const attacker = await context.newPage();
@@ -78,20 +82,30 @@ try {
   assert.equal(result.suspending, 'function');
   assert.equal(result.promising, 'function');
   const expectMissingInfo = process.env.OUTPOST_EXPECT_MISSING_INFO === '1';
-  if (expectMissingInfo) {
+  if (tamper) {
+    assert.equal(result.phase, 'failed');
+    assert.match(result.error, /Response body did not match the network request/);
+  } else if (expectMissingInfo) {
     assert.equal(result.phase, 'failed');
     assert.match(result.error, /Missing request-bound HTTPS evidence/);
   } else {
     assert.equal(result.phase, 'complete');
     assert.equal(result.document, 'OUTPOST isolated fixture');
   }
-  if (fixtureBuild && !expectMissingInfo) {
+  if (fixtureBuild && !expectMissingInfo && !tamper) {
     assert.equal(result.transport?.hostSecure, true);
     assert.equal(result.transport?.bodyMatched, true);
     assert.equal(result.transport?.expiredRejected, true);
     assert.equal(result.transport?.selfSignedRejected, true);
     if (delegated) assert.equal(result.transport?.requestBoundCertificate, true);
-    if (!delegated) assert.equal(result.navigation, process.env.OUTPOST_EXPECT_REJECTION === '1' ? 'failed' : 'ok');
+    if (stateOnly) {
+      assert.equal(result.transport?.requestBoundState, true);
+      assert.equal(result.transport?.certificateAvailable, false);
+      assert.equal(result.certificate, 'absent');
+      assert.equal(result.beforeHsts, 'absent');
+      assert.equal(result.afterHsts, 'present');
+    }
+    if (!delegated && !stateOnly) assert.equal(result.navigation, process.env.OUTPOST_EXPECT_REJECTION === '1' ? 'failed' : 'ok');
     if (process.env.OUTPOST_EXPECT_ERROR) {
       assert.ok(errors.some(message => message.includes('OUTPOST_FIXTURE_CERT_VERIFY_RESULT=' + process.env.OUTPOST_EXPECT_ERROR)),
         'Expected certificate verification error was not observed');
