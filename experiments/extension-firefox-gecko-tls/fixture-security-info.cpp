@@ -21,16 +21,34 @@ static already_AddRefed<nsITransportSecurityInfo> OutpostTestSecurityInfo(
   }
   if (chain.IsEmpty()) return nullptr;
   nsCOMPtr<nsIX509Cert> server = chain[0].get();
-  // Check the DNS name independently even in this deliberately unsafe fixture.
+  // Independently validate the host, time, purpose, and chain against Gecko's
+  // own trust store. The host-provided intermediates are not trust anchors.
   nsTArray<uint8_t> serverDER;
   if (NS_FAILED(server->GetRawDER(serverDER))) return nullptr;
-  mozilla::pkix::Input certInput, hostInput;
-  constexpr auto host = "example.com"_ns;
-  if (certInput.Init(serverDER.Elements(), serverDER.Length()) != mozilla::pkix::Success ||
-      hostInput.Init(reinterpret_cast<const uint8_t*>(host.BeginReading()), host.Length()) != mozilla::pkix::Success ||
-      mozilla::pkix::CheckCertHostname(certInput, hostInput) != mozilla::pkix::Success) return nullptr;
-  // Host reports a verified chain; the original handshake list and several
-  // connection properties are unavailable and deliberately left unspecified.
+  nsTArray<nsTArray<uint8_t>> extraCertificates;
+  for (size_t i = 1; i < chain.Length(); ++i) {
+    nsTArray<uint8_t> der;
+    if (NS_FAILED(chain[i]->GetRawDER(der))) return nullptr;
+    extraCertificates.AppendElement(std::move(der));
+  }
+  RefPtr<psm::SharedCertVerifier> verifier = psm::GetDefaultCertVerifier();
+  if (!verifier) return nullptr;
+  nsTArray<nsTArray<uint8_t>> verifiedDER;
+  auto result = verifier->VerifySSLServerCert(
+      serverDER, mozilla::pkix::Now(), nullptr, "example.com"_ns, verifiedDER,
+      psm::CertVerifier::FLAG_LOCAL_ONLY, Some(std::move(extraCertificates)));
+  if (result != mozilla::pkix::Success || verifiedDER.IsEmpty()) return nullptr;
+  chain.Clear();
+  for (const auto& der : verifiedDER) {
+    nsCOMPtr<nsIX509Cert> cert;
+    nsAutoCString encoded;
+    if (NS_FAILED(mozilla::Base64Encode(reinterpret_cast<const char*>(der.Elements()), der.Length(), encoded)) ||
+        NS_FAILED(database->ConstructX509FromBase64(encoded, getter_AddRefs(cert))) || !cert) return nullptr;
+    chain.AppendElement(cert);
+  }
+  server = chain[0].get();
+  // TEST ONLY: this is not proof that the content was delivered by this TLS
+  // connection; the original handshake and other properties are unavailable.
   nsTArray<RefPtr<nsIX509Cert>> handshake;
   RefPtr<psm::TransportSecurityInfo> info = new psm::TransportSecurityInfo(
       nsIWebProgressListener::STATE_IS_SECURE, 0, std::move(handshake), server,

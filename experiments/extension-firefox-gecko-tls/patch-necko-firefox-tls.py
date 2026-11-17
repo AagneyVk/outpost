@@ -18,6 +18,9 @@ includes = '''#include "nsITransportSecurityInfo.h"
 #include "nsIX509Cert.h"
 #include "nsIX509CertDB.h"
 #include "mozpkix/pkix.h"
+#include "mozpkix/Time.h"
+#include "mozilla/Base64.h"
+#include "../../../security/manager/ssl/nsNSSComponent.h"
 #include "../../../security/manager/ssl/TransportSecurityInfo.h"
 '''
 assert text.count(anchor) == 1

@@ -9,6 +9,8 @@ import { X509Certificate } from 'node:crypto';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const forgedTest = process.env.OUTPOST_FORGED_TEST === '1';
+const tamperTest = process.env.OUTPOST_TAMPER_TEST === '1';
+if (forgedTest && tamperTest) throw Error('Run adversarial cases separately');
 if (!process.env.OUTPOST_FIXTURE_BUILD) throw Error('Set OUTPOST_FIXTURE_BUILD to the test engine artifact directory');
 const profile = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
 const addon = await fs.mkdtemp(path.join(dir, 'temporary-addon-'));
@@ -55,7 +57,8 @@ try {
     connection.destroy();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const testPage = 'http://127.0.0.1:' + server.address().port + '/' + (forgedTest ? '?case=forged' : '');
+  const testPage = 'http://127.0.0.1:' + server.address().port + '/' +
+    (forgedTest ? '?case=forged' : tamperTest ? '?case=tamper' : '');
   await fs.writeFile(path.join(addon, 'config.js'),
     'const TEST_PAGE = ' + JSON.stringify(testPage) + ';\n');
   const reserve = net.createServer();
@@ -119,7 +122,7 @@ try {
   console.log(JSON.stringify(result, null, 2));
   assert.equal(result.fatal, undefined);
   assert.equal(result.site.href, 'https://example.com/');
-  assert.equal(result.site.title, 'Example Domain');
+  assert.equal(result.site.title, tamperTest ? 'TAMPERED FIXTURE CONTENT' : 'Example Domain');
   assert.equal(result.site.secureContext, true);
   assert.equal(result.securityInfo, 'present');
   assert.equal(result.hostEvidence.length, 3);
@@ -133,8 +136,8 @@ try {
   if (forgedTest) {
     assert.equal(adversarialCert.checkHost('example.com'), 'example.com');
     assert.equal(adversarialCert.verify(adversarialCert.publicKey), true, 'fixture must be self-signed');
-    assert.equal(result.corrupt, 'ok', 'this test documents a known trust-boundary vulnerability');
-    console.log('KNOWN VULNERABILITY: forged self-signed same-host certificate was accepted.');
+    assert.equal(result.corrupt, 'failed', 'Gecko must reject forged same-host self-signed evidence');
+    console.log('Rejected forged same-host self-signed certificate evidence.');
   } else {
     assert.equal(adversarialCert.checkHost('example.com'), undefined,
       'The adversarial certificate must belong to a different host');
@@ -145,6 +148,7 @@ try {
   assert.equal(result.failures.length, 2);
   for (const failure of result.failures) assert.match(failure.networkError || '', /cert/i);
   assert.equal(relayAttempts, 0, 'fixture must not fall back to a relay');
+  if (tamperTest) console.log('KNOWN VULNERABILITY: altered content accepted with unrelated valid certificate evidence.');
 } finally {
   socket?.destroy();
   if (firefox && firefox.exitCode === null) {

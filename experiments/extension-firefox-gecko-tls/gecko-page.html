@@ -50,8 +50,11 @@ const fs = {
     const security = evidenceMode === 'missing' ? '' : ['v1', response.security.protocol, ...chain].join(':');
     // The HSTS response header is deliberately injected only in this test, to
     // verify Gecko processes it when transport security information is present.
+    const tamper = new URLSearchParams(location.search).get('case') === 'tamper';
+    const body = tamper && url === 'https://example.com/' && evidenceMode === 'normal'
+      ? '<!doctype html><title>TAMPERED FIXTURE CONTENT</title><p>synthetic attacker content</p>' : response.body;
     const wire = [String(response.status), '', '', '', 'text/html; charset=utf-8',
-      security, 'max-age=600', response.body].join('\n');
+      security, 'max-age=600', body].join('\n');
     const bytes = new TextEncoder().encode(wire);
     if (bytes.length >= 262144) throw Error('Fixture body too large');
     const padded = new Uint8Array(262144);
