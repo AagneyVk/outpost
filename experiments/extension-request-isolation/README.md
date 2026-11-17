@@ -18,12 +18,18 @@ The race fixture demonstrates why a single shared rule ID is unsafe: two tabs ca
 
 An opt-in test also connected to the public `wss://echo.websocket.org/` service and received synthetic text and binary echoes while a cookie-removal rule matched. **Remote cookie isolation was not verified.** Chrome's pre-send `webRequest` observation still showed the synthetic host canary, while its debugger handshake event omitted the cookie header. A loopback control showed that the debugger event omitted the cookie even when the server actually received it. Therefore neither the pre-rule observation nor the debugger event alone proves what the public server received; the local server-side tests are the evidence for local cookie isolation.
 
+An anonymous public-resource probe concurrently requested two HTML pages, an RFC text file, an SVG, and a PNG on five fixed HTTPS hosts. On Chrome 157 all five had request-bound secure TLS metadata, exact response-byte matches, and no synthetic host cookie or private marker in the observed outgoing headers. A URL that redirected was intentionally rejected; the tested SVG URL is the final URL. This is an extension-only fixture, **not** browsing in Gecko, a general website test, or production code. Sites, certificates, networks and content can change.
+
+The RFC file exposed a byte-fidelity problem: `Network.getResponseBody` returned decoded text without its UTF-8 byte-order mark, so a strict comparison failed. The probe now tries `Network.streamResourceContent` and joins its request-bound binary chunks; if streaming starts too late, it falls back to `getResponseBody` but still requires an exact byte match. The fixture caps the captured body at 2 MiB and rejects mismatches. The public RFC, SVG and PNG matched via streaming in one run; small pages used the strict fallback. Browser-version behavior, large files, backpressure, compressed encodings, and hostile responses need further testing. This does not establish a secure or general streaming transport.
+
 ## Running
 
 With Node dependencies installed and a current Chrome, run from the repository root:
 
 ```powershell
 node experiments/extension-request-isolation/run.mjs
+node --test experiments/extension-request-isolation/capture-bytes.test.mjs
+node experiments/extension-request-isolation/run-general-public.mjs
 node --test experiments/extension-request-isolation/redirect-binding.test.mjs
 $env:OUTPOST_REDIRECT_GATE = '1'
 node experiments/extension-request-isolation/run-redirect-https.mjs

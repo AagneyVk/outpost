@@ -12,6 +12,7 @@ try {
   const publicSave = mode === 'public-demo-save';
   const publicRestore = mode === 'public-demo-restore';
   const publicDemo = mode === 'public-demo' || publicLogout || publicSave || publicRestore;
+  const matrix = mode === 'cookie-cache-matrix';
   const signIn = mode === 'signin' || mode === 'signin-form' || mode === 'signin-form-bad';
   const formSignIn = mode === 'signin-form' || mode === 'signin-form-bad';
   const internal = mode.startsWith('internal');
@@ -20,13 +21,15 @@ try {
   let httpsFixture;
   let signInFixture;
   let publicFixture;
+  let matrixFixture;
   if (httpsMode) httpsFixture = await (await import('./https-fixture.mjs')).createHttpsFixture({ delegated: mode === 'delegated', stateOnly, internal, tamper: mode.endsWith('-tamper'), noEvidence: mode.endsWith('-no-evidence'), noScriptEvidence: mode.endsWith('-no-script-evidence') });
   if (signIn) signInFixture = await (await import('./local-signin.mjs')).createLocalSignInFixture(new URLSearchParams(location.search).get('origin'), { form: formSignIn });
   if (publicDemo) publicFixture = await (await import('./public-signin.mjs')).createPublicSignInFixture({ logout: publicLogout });
+  if (matrix) matrixFixture = await (await import('./cookie-cache-fixture.mjs')).createCookieCacheFixture(new URLSearchParams(location.search).get('origin'));
   const gecko = new Gecko({ canvas: document.querySelector('#screen'), width: 800, height: 600,
     wispUrl: 'ws://127.0.0.1:1/wisp/',
     wasm: { url: chrome.runtime.getURL('gecko.wasm.zst'), compressed: true },
-    profile: 'outpost-chrome-context-fixture', fs: httpsFixture?.fs || signInFixture?.fs || publicFixture?.fs,
+    profile: 'outpost-chrome-context-fixture', fs: httpsFixture?.fs || signInFixture?.fs || publicFixture?.fs || matrixFixture?.fs,
     env: { GECKO_NOWASMJIT: '1', GRE_DIR: '/gre-baked' },
     print: message => console.log('[gecko]', message), printErr: message => console.error('[gecko]', message) });
   globalThis.fixtureResult.phase = 'initializing';
@@ -34,6 +37,46 @@ try {
   globalThis.fixtureResult.phase = 'initialized';
   await gecko.load('data:text/html,%3Ctitle%3EOUTPOST%20isolated%20fixture%3C%2Ftitle%3E');
   globalThis.fixtureResult.document = await gecko.evalChrome('document.title');
+  if (matrix) {
+    if (await gecko.evalChrome('outpost:fixture-install') !== 'ok') throw Error('Fixture install failed');
+    await gecko.load('http://fixture.test/matrix/home');
+    let matrixReady = false;
+    for (let i = 0; i < 120; i++) {
+      matrixReady = (await gecko.evalChrome('document.title')) === 'Matrix fixture';
+      if (matrixReady) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (!matrixReady) throw Error('Matrix fixture home did not load');
+    await gecko.evalChrome(`window.fixtureMatrix = 'pending';
+      (async () => {
+        const get = async path => (await fetch(path)).text();
+        await get('/matrix/set');
+        await get('/matrix/set-extra');
+        document.cookie = 'client=synthetic; Path=/';
+        const visible = document.cookie;
+        const privateCookie = await get('/matrix/private/echo');
+        const publicCookie = await get('/matrix/echo');
+        const cacheFirst = await get('/matrix/cache');
+        const cacheSecond = await get('/matrix/cache');
+        const conditional = await fetch('/matrix/cache', {headers:{'If-None-Match':'"fixture-v1"'}});
+        const conditionalStatus = conditional.status, conditionalBody = await conditional.text();
+        const noStoreFirst = await get('/matrix/no-store');
+        const noStoreSecond = await get('/matrix/no-store');
+        document.cookie = 'client=; Max-Age=0; Path=/';
+        await get('/matrix/delete');
+        const afterDelete = await get('/matrix/echo');
+        return { visible, privateCookie, publicCookie, cacheFirst, cacheSecond, conditionalStatus, conditionalBody, noStoreFirst, noStoreSecond, afterDelete };
+      })().then(value => window.fixtureMatrix = JSON.stringify(value), error => window.fixtureMatrix = JSON.stringify({error:String(error)}));
+      'started'`);
+    for (let i = 0; i < 240; i++) {
+      const value = await gecko.evalChrome('String(window.fixtureMatrix)');
+      if (value !== 'pending' && value !== 'undefined') { globalThis.fixtureResult.matrix = JSON.parse(value); break; }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    globalThis.fixtureResult.matrixTransport = matrixFixture.report;
+    globalThis.fixtureResult.matrixErrors = matrixFixture.errors;
+    await matrixFixture.close();
+  }
   if (publicDemo) {
     if (await gecko.evalChrome('outpost:fixture-install') !== 'ok') throw Error('Fixture install failed');
     if (publicRestore) {

@@ -139,6 +139,19 @@ Remove-Item Env:OUTPOST_PUBLIC_DEMO_PORTABLE
 
 Both diagnostics require `OUTPOST_FIXTURE_BUILD` to refer to the matching local engine. The locally built compiler image and binary are not included. Never use real credentials; the fixture sends the published synthetic credentials through a test-only virtual file path.
 
+The `cookie-cache-engine/` overlay and `OUTPOST_COOKIE_CACHE_MATRIX=1` add a separate **loopback-only synthetic** Gecko test. The host server saw an HttpOnly cookie hidden from document JavaScript, a JavaScript-set cookie on requests, path-scoped cookies on the matching route only, and cookies removed by `Max-Age=0`; the host Chrome cookie canary was not sent. A `Secure` cookie set over the synthetic HTTP origin and a `SameSite=None` cookie without `Secure` did not appear in subsequent requests. A conditional request explicitly supplied by the test reached the server and returned a bodyless 304. Two requests for a `no-store` resource reached the server separately after the fixture's virtual-file path was made unique per request; because the override bypasses Gecko's cache, this alone does not establish complete `no-store` handling. The rejected-domain example was not verified by visiting that other domain, and SameSite, partitioned, Secure, expiry, concurrency, and cookie portability are not comprehensively tested.
+
+**Automatic caching remains a release blocker.** Two requests to a `no-cache` resource with an ETag made two unconditional 200 requests: Gecko did not add `If-None-Match`. Inspection of this research engine shows its response override returns before Gecko's normal HTTP cache path. The strict matrix command intentionally fails until automatic revalidation works. Setting `OUTPOST_EXPECT_CACHE_GAP=1` runs the remaining assertions while explicitly confirming the known failure; a successful exit in that mode is **not** a cache or production pass. The matching isolated build requires overlaying `cookie-cache-engine/` last on the sign-in test build; the builder image and compiled engine are not included.
+
+```powershell
+$env:OUTPOST_COOKIE_CACHE_MATRIX = '1'
+node experiments/extension-chrome-context/run.mjs  # currently fails automatic cache revalidation
+$env:OUTPOST_EXPECT_CACHE_GAP = '1'
+node experiments/extension-chrome-context/run.mjs  # verifies the documented gap and other controls
+Remove-Item Env:OUTPOST_EXPECT_CACHE_GAP
+Remove-Item Env:OUTPOST_COOKIE_CACHE_MATRIX
+```
+
 ## Work still required
 
 The user-facing extension must securely bind the response, its URL and redirects, and request-specific TLS state without trusting a web page or an origin-keyed certificate lookup. Its treatment of the host's enterprise or antivirus trust roots needs a deliberate, tested policy. General requests, streaming, cookies, CORS, origin headers, HSTS, WebSockets, errors, concurrent requests, sign-ins, installation and updates are unimplemented. The extension-owned context also changes the hosting and workspace-storage model; compatibility with OUTPOST's existing UI and encrypted portable workspaces remains untested. Independent security review and real browser compatibility tests are still needed before release.

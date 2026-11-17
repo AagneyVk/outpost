@@ -8,6 +8,9 @@ import { chromium } from 'playwright-core';
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(dir, '../..');
 const fixtureBuild = process.env.OUTPOST_FIXTURE_BUILD && path.resolve(process.env.OUTPOST_FIXTURE_BUILD);
+const matrixTest = process.env.OUTPOST_COOKIE_CACHE_MATRIX === '1';
+const expectCacheGap = process.env.OUTPOST_EXPECT_CACHE_GAP === '1';
+if (expectCacheGap && !matrixTest) throw Error('Cache gap control requires the matrix fixture');
 const directLogout = process.env.OUTPOST_PUBLIC_DEMO_LOGOUT_DIRECT === '1';
 const pointerLogout = process.env.OUTPOST_PUBLIC_DEMO_LOGOUT_POINTER === '1';
 const publicPortable = process.env.OUTPOST_PUBLIC_DEMO_PORTABLE === '1';
@@ -27,19 +30,20 @@ if (delegated && stateOnly || (tamper || noEvidence) && !stateOnly || tamper && 
 if (stateOnly && !fixtureBuild) throw Error('State test requires its matching test engine');
 if (signInTest && (!fixtureBuild || stateOnly || delegated)) throw Error('Sign-in test requires its own fixture mode and matching engine');
 if (publicDemo && (!fixtureBuild || stateOnly || delegated || signInTest)) throw Error('Public demo requires its own fixture mode and matching engine');
+if (matrixTest && (!fixtureBuild || publicDemo || stateOnly || delegated || signInTest)) throw Error('Matrix test requires its matching isolated engine');
 if (delegated && !fixtureBuild) throw Error('Delegated test requires its matching test engine');
 const addon = await fs.mkdtemp(path.join(dir, 'temporary-addon-'));
 const profile = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
 let context, restoreContext, restoreProfile, server;
 try {
-  for (const name of ['index.html', 'page.mjs', 'https-fixture.mjs', 'response-binding.mjs', 'local-signin.mjs', 'public-signin.mjs'])
+  for (const name of ['index.html', 'page.mjs', 'https-fixture.mjs', 'response-binding.mjs', 'local-signin.mjs', 'public-signin.mjs', 'cookie-cache-fixture.mjs'])
     await fs.copyFile(path.join(dir, name), path.join(addon, name));
   await fs.copyFile(path.join(root, 'public/portable.js'), path.join(addon, 'portable.js'));
   await fs.copyFile(path.join(root, 'experiments/extension-request-isolation/redirect-binding.mjs'), path.join(addon, 'redirect-binding.mjs'));
   const manifest = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8'));
   if (fixtureBuild) {
     manifest.permissions = ['debugger', 'tabs', ...(delegated ? ['webRequest'] : [])];
-    manifest.host_permissions = publicDemo ? ['https://practice.expandtesting.com/*'] : signInTest ? ['http://127.0.0.1/*'] :
+    manifest.host_permissions = publicDemo ? ['https://practice.expandtesting.com/*'] : (signInTest || matrixTest) ? ['http://127.0.0.1/*'] :
       ['https://example.com/*', 'https://expired.badssl.com/*', 'https://self-signed.badssl.com/*'];
   }
   await fs.writeFile(path.join(addon, 'manifest.json'), JSON.stringify(manifest));
@@ -62,7 +66,22 @@ try {
   await fs.copyFile(fixtureBuild ? path.join(fixtureBuild, 'gecko.wasm.zst') :
     path.join(root, 'public/gecko-lab/engine/gecko-input-v7.wasm.zst'), path.join(addon, 'gecko.wasm.zst'));
   const observed = [];
+  let noStoreVisits = 0;
   server = http.createServer((req, res) => {
+    if (matrixTest && req.url.startsWith('/matrix/')) {
+      const item = { path: req.url, method: req.method, cookie: req.headers.cookie || '', marker: req.headers['x-outpost-fixture-id'] || '', validator: req.headers['if-none-match'] || '' };
+      observed.push(item);
+      if (req.url === '/matrix/home') return res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }).end('<!doctype html><title>Matrix fixture</title>');
+      if (req.url === '/matrix/set') return res.writeHead(200, { 'Set-Cookie': ['workspace=alpha; HttpOnly; Path=/', 'scoped=beta; Path=/matrix/private'], 'Cache-Control': 'no-store' }).end('set');
+      if (req.url === '/matrix/set-extra') return res.writeHead(200, { 'Set-Cookie': ['secureOnly=wrong; Secure; Path=/', 'noneWithoutSecure=wrong; SameSite=None; Path=/'], 'Cache-Control': 'no-store' }).end('set-extra');
+      if (req.url === '/matrix/delete') return res.writeHead(200, { 'Set-Cookie': ['workspace=gone; Max-Age=0; Path=/', 'bad=wrong; Domain=foreign.test; Path=/'], 'Cache-Control': 'no-store' }).end('deleted');
+      if (req.url === '/matrix/private/echo' || req.url === '/matrix/echo') return res.writeHead(200, { 'Cache-Control': 'no-store' }).end(item.cookie);
+      if (req.url === '/matrix/cache') return req.headers['if-none-match'] === '"fixture-v1"'
+        ? res.writeHead(304, { 'Cache-Control': 'no-cache', ETag: '"fixture-v1"' }).end()
+        : res.writeHead(200, { 'Cache-Control': 'no-cache', ETag: '"fixture-v1"' }).end('cache-body-v1');
+      if (req.url === '/matrix/no-store') return res.writeHead(200, { 'Cache-Control': 'no-store' }).end('visit-' + (++noStoreVisits));
+      return res.writeHead(404).end();
+    }
     if (signInTest && ['/login', '/authenticate', '/account'].includes(req.url)) {
       const item = { path: req.url, method: req.method, cookie: req.headers.cookie || '', marker: req.headers['x-outpost-fixture-id'] || '' };
       observed.push(item);
@@ -95,7 +114,7 @@ try {
     headless: true, ignoreDefaultArgs: ['--disable-extensions'], args
   });
   const fixtureOrigin = 'http://127.0.0.1:' + server.address().port;
-  if (signInTest) await context.addCookies([{ name: 'host_canary', value: 'must-not-leak', url: fixtureOrigin }]);
+  if (signInTest || matrixTest) await context.addCookies([{ name: 'host_canary', value: 'must-not-leak', url: fixtureOrigin }]);
   if (publicDemo) await context.addCookies([{ name: 'host_canary', value: 'must-not-leak', domain: 'practice.expandtesting.com', path: '/', secure: true, sameSite: 'None' }]);
   const cdp = await context.browser().newBrowserCDPSession();
   const { id } = await cdp.send('Extensions.loadUnpacked', { path: addon });
@@ -105,7 +124,7 @@ try {
   page.on('pageerror', error => errors.push(String(error)));
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text().slice(0, 500)); });
   const stateMode = internal ? 'internal' : 'state';
-  const query = publicDemo ? (directLogout ? '?mode=public-demo-logout-direct' : pointerLogout ? '?mode=public-demo-logout-pointer' : publicLogout ? '?mode=public-demo-logout' : publicPortable ? '?mode=public-demo-save' : '?mode=public-demo') : signInTest ? '?' + new URLSearchParams({ mode: wrongSignIn ? 'signin-form-bad' : formSignIn ? 'signin-form' : 'signin', origin: fixtureOrigin }) :
+  const query = matrixTest ? '?' + new URLSearchParams({ mode: 'cookie-cache-matrix', origin: fixtureOrigin }) : publicDemo ? (directLogout ? '?mode=public-demo-logout-direct' : pointerLogout ? '?mode=public-demo-logout-pointer' : publicLogout ? '?mode=public-demo-logout' : publicPortable ? '?mode=public-demo-save' : '?mode=public-demo') : signInTest ? '?' + new URLSearchParams({ mode: wrongSignIn ? 'signin-form-bad' : formSignIn ? 'signin-form' : 'signin', origin: fixtureOrigin }) :
     fixtureBuild ? (stateOnly ? '?mode=' + stateMode + (tamper ? '-tamper' : noEvidence ? '-no-evidence' : noScriptEvidence ? '-no-script-evidence' : '') : delegated ? '?mode=delegated' : '?mode=https') : '';
   await page.goto('chrome-extension://' + id + '/index.html' + query);
   if (pointerLogout) {
@@ -218,7 +237,7 @@ try {
     assert.equal((await context.cookies()).some(cookie => cookie.name === 'host_canary'), true);
     assert.equal((await context.cookies()).some(cookie => cookie.name === 'workspace_session'), false);
   }
-  if (fixtureBuild && !signInTest && !publicDemo && !expectMissingInfo && !tamper) {
+  if (fixtureBuild && !signInTest && !publicDemo && !matrixTest && !expectMissingInfo && !tamper) {
     assert.equal(result.transport?.hostSecure, true);
     assert.equal(result.transport?.bodyMatched, true);
     assert.equal(result.transport?.expiredRejected, true);
@@ -262,6 +281,27 @@ try {
   }
   assert.notEqual(boundary.messaging, 'accepted');
   assert.equal(boundary.read, 'rejected');
+  if (matrixTest) {
+    assert.deepEqual(result.matrixErrors, []);
+    assert.ok(result.matrix, 'matrix result missing');
+    assert.equal(result.matrix.visible.includes('workspace='), false, 'HttpOnly cookie must be hidden');
+    assert.equal(result.matrix.visible, 'client=synthetic');
+    assert.deepEqual(new Set(result.matrix.privateCookie.split('; ')), new Set(['workspace=alpha', 'scoped=beta', 'client=synthetic']));
+    assert.deepEqual(new Set(result.matrix.publicCookie.split('; ')), new Set(['workspace=alpha', 'client=synthetic']));
+    assert.equal(result.matrix.afterDelete, '');
+    assert.equal(result.matrix.cacheFirst, 'cache-body-v1');
+    assert.equal(result.matrix.cacheSecond, 'cache-body-v1');
+    assert.equal(result.matrix.conditionalStatus, 304);
+    assert.equal(result.matrix.conditionalBody, '');
+    assert.equal(result.matrix.noStoreFirst, 'visit-1');
+    assert.equal(result.matrix.noStoreSecond, 'visit-2');
+    assert.deepEqual(observed.filter(item => item.path === '/matrix/cache').map(item => item.validator),
+      expectCacheGap ? ['', '', '"fixture-v1"'] : ['', '"fixture-v1"', '"fixture-v1"'],
+      'automatic ETag revalidation must be forwarded');
+    if (expectCacheGap) console.log('KNOWN CACHE GAP: automatic conditional revalidation was not performed; this control is not a production pass.');
+    assert.ok(observed.every(item => !item.marker && !item.cookie.includes('host_canary')));
+    assert.deepEqual((await context.cookies(fixtureOrigin)).map(cookie => cookie.name), ['host_canary']);
+  }
 } finally {
   if (restoreContext) await restoreContext.close();
   if (context) await context.close();
