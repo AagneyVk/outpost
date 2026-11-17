@@ -2,6 +2,7 @@
 // origin-keyed certificate lookup is deliberately not part of this evidence.
 export function validateResponseBinding({ url, status, finalURL, body, capturedBody,
   requests, responses, failures, redirects }) {
+  if (new URL(url).protocol !== 'https:') throw Error('Verified HTTPS URL required');
   if (finalURL !== url) throw Error('Unexpected final URL');
   const matches = [...responses].filter(([id, response]) =>
     requests.get(id) === url && response.url === url);

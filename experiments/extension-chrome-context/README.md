@@ -18,6 +18,14 @@ An **internal-channel** variant moves this evidence out of HTTP headers into a p
 
 **The internal-channel variant is still not production code.** Its fixed-size virtual-file transport is controlled by test code and has no authenticated general-purpose request channel. The property is accessible to privileged Gecko code and is not a substitute for a fully specified trust boundary. The fixture supports two hardcoded URLs, no general redirects, cookies, binary streaming, WebSockets or real sign-ins. It still fabricates an incomplete Gecko security object without a certificate, and its HSTS input is synthetic. The external badssl services or antivirus interception can make tests fail for reasons other than the expected certificate errors; the tests do not treat those failures as success.
 
+A separate local sign-in fixture exercises a small part of the Gecko-to-extension path: Gecko loads a local synthetic form, submits the fixed test fields with POST, receives a 302 and an HttpOnly session cookie, follows the redirect, and reaches a local account page. The test confirms that a synthetic host-browser cookie was not sent and the workspace cookie was not stored in Chrome's host cookie jar. A negative test supplies a different test password and checks that the fixture rejects it before contacting the authentication endpoint. This is not a real website or an HTTPS, CSRF, general cookie, portability, or third-party login test.
+
+**Never use the local sign-in fixture with real credentials.** It encodes the form body in a virtual filesystem path, relies on a fixed-size, synchronous test transport, and prints synthetic request data. Its narrow allowlist is intentional. The [separate request-isolation fixture](../extension-request-isolation/) tests additional loopback redirect, streaming, cancellation, and WebSocket scenarios; those paths are not yet integrated with Gecko.
+
+The public-demo variant submits the practice site's published synthetic credentials from the Gecko fixture through the extension to `practice.expandtesting.com` over HTTPS. In the tested Chrome 157 run, the login GET, authentication POST, 302, and secure-page GET were tied to Chrome network events with secure TLS state. Chrome's automatic follow-up was blocked; Gecko processed the redirect and sent its synthetic session cookies on the subsequent GET. A synthetic host-browser cookie and the private correlation marker were absent from the network request, and the demo session cookies were absent from Chrome's host cookie jar. The test received the site's secure-page text and logout link.
+
+**This is a narrow test, not an installable login implementation.** The fixture only permits three exact public-demo URLs and its published credentials; its Gecko hook encodes the form body in a virtual filename. It injects a restrictive CSP that blocks the site's scripts, fonts, images and styles, and does not forward pre-login cookies on the authentication POST. It does not test full-site rendering, CSRF, multi-factor authentication, cross-device restore, arbitrary redirects, or real credentials. The Gecko security object still lacks certificate details and is only as trustworthy as the test-only per-channel handoff. Chrome's debugger permission, policies and unstable protocol remain release risks.
+
 **The delegated engine is unsafe to distribute.** Its test-only Gecko patch accepts a fabricated header as proof of transport security and cannot enforce the extension's trust boundary itself. The test depends on Chrome's developer feature flag, a powerful debugger permission, a single serialized request, a synthetic HSTS header and no redirects. It does not establish that this can safely handle real websites or credentials. No such patch is included in the release engine.
 
 Chrome's [webRequest documentation](https://developer.chrome.com/docs/extensions/reference/api/webRequest) describes certificate metadata, but in the tested Chrome 157 a normal listener observed the response while the security details were missing without the experimental `WebRequestSecurityInfo` feature. With the flag, a request-specific DER certificate and matching fingerprint were returned. Without that evidence, the delegated fixture fails closed.
@@ -94,6 +102,29 @@ node experiments/extension-chrome-context/run.mjs
 Remove-Item Env:OUTPOST_STATE_TAMPER
 Remove-Item Env:OUTPOST_INTERNAL_TEST
 ```
+
+For the synthetic Gecko form, prepare a disposable build by overlaying `internal-engine/` and then `signin-engine/` on `delegated-engine/`, and set `OUTPOST_FIXTURE_BUILD` to its output:
+
+```powershell
+$env:OUTPOST_LOCAL_SIGNIN_FORM = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_LOCAL_SIGNIN_FORM
+$env:OUTPOST_LOCAL_SIGNIN_WRONG = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_LOCAL_SIGNIN_WRONG
+```
+
+For the public HTTPS demo, overlay `public-demo-engine/` last on that disposable sign-in build, set `OUTPOST_FIXTURE_BUILD` to its output, and run:
+
+```powershell
+$env:OUTPOST_PUBLIC_DEMO_FORM = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_PUBLIC_DEMO_FORM
+```
+
+This contacts an external demo service, which can change or be unavailable, and uses only the test credentials published by that service. The locally built compiler image and binary are not included in the repository.
+
+An additional `public-logout-engine/` overlay and `OUTPOST_PUBLIC_DEMO_LOGOUT=1` diagnostic attempt to click the demo's logout link. The simulated click did not navigate in this stripped-down fixture. `OUTPOST_PUBLIC_DEMO_LOGOUT_DIRECT=1` instead navigates directly to the logout URL; the server returned a verified HTTPS 302, and in one run a later protected-page request also received a 302. The overall direct diagnostic did **not** pass reliably: its revisit sometimes failed to produce the expected network request, so logout and session invalidation are not verified. These diagnostics intentionally fail if the expected sequence is absent. They do not establish how a real user click behaves. Do not use real credentials; this fixture sends the published synthetic credentials through a test-only virtual file path.
 
 ## Work still required
 

@@ -3,3 +3,6 @@ temporary-profile-*/
 delegated-engine/build-ordered/
 state-engine/build-ordered/
 internal-engine/build-ordered/
+signin-engine/build-ordered/
+public-demo-engine/build-ordered/
+public-logout-engine/build-ordered/

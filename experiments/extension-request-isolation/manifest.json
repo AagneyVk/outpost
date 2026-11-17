@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "OUTPOST per-request transport research",
+  "version": "0.0.1",
+  "permissions": ["debugger", "tabs", "declarativeNetRequest", "declarativeNetRequestFeedback", "webRequest"],
+  "host_permissions": ["http://127.0.0.1/*", "ws://127.0.0.1/*"]
+}

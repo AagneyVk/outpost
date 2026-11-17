@@ -17,6 +17,7 @@ test('rejects altered, ambiguous, redirected, cached or insecure response eviden
     e => { e.capturedBody[1] = 0; },
     e => { e.capturedBody = bytes(0); },
     e => { e.finalURL = 'https://example.org/'; },
+    e => { e.url = 'http://example.com/'; e.finalURL = e.url; },
     e => { e.failures.set('r1', 'net::ERR_CERT_DATE_INVALID'); },
     e => { e.redirects.add('r1'); },
     e => { e.responses.get('r1').fromDiskCache = true; },
