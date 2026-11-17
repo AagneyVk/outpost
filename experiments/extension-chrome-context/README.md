@@ -141,14 +141,21 @@ Both diagnostics require `OUTPOST_FIXTURE_BUILD` to refer to the matching local 
 
 The `cookie-cache-engine/` overlay and `OUTPOST_COOKIE_CACHE_MATRIX=1` add a separate **loopback-only synthetic** Gecko test. The host server saw an HttpOnly cookie hidden from document JavaScript, a JavaScript-set cookie on requests, path-scoped cookies on the matching route only, and cookies removed by `Max-Age=0`; the host Chrome cookie canary was not sent. A `Secure` cookie set over the synthetic HTTP origin and a `SameSite=None` cookie without `Secure` did not appear in subsequent requests. A conditional request explicitly supplied by the test reached the server and returned a bodyless 304. Two requests for a `no-store` resource reached the server separately after the fixture's virtual-file path was made unique per request; because the override bypasses Gecko's cache, this alone does not establish complete `no-store` handling. The rejected-domain example was not verified by visiting that other domain, and SameSite, partitioned, Secure, expiry, concurrency, and cookie portability are not comprehensively tested.
 
-**Automatic caching remains a release blocker.** Two requests to a `no-cache` resource with an ETag made two unconditional 200 requests: Gecko did not add `If-None-Match`. Inspection of this research engine shows its response override returns before Gecko's normal HTTP cache path. The strict matrix command intentionally fails until automatic revalidation works. Setting `OUTPOST_EXPECT_CACHE_GAP=1` runs the remaining assertions while explicitly confirming the known failure; a successful exit in that mode is **not** a cache or production pass. The matching isolated build requires overlaying `cookie-cache-engine/` last on the sign-in test build; the builder image and compiled engine are not included.
+The original `cookie-cache-engine/` still fails automatic caching: its response override returns before Gecko's normal HTTP cache path. `OUTPOST_EXPECT_CACHE_GAP=1` is a control that explicitly checks this known failure; a successful exit in that mode is **not** a cache or production pass.
+
+The separate `cookie-cache-native-engine/` overlay is a **test-only** attempt to move the synthetic request after Gecko's cache decision and use its memory cache. In Chrome 157, the extended matrix passed: fresh content was reused, `no-cache` ETags were revalidated with 304, a changed response replaced the old one, and `no-store` reached the server twice. A cached response did not replay `Set-Cookie`; `Vary: Accept-Language` and `Vary: Cookie` produced the correct synthetic variants. Gecko received a binary response intact and decoded a 1×1 PNG. Two deliberately truncated responses failed and were requested again; late Chrome interception events were matched to the corresponding synthetic requests.
+
+This is not a production cache implementation. It only handles the reserved HTTP fixture paths, fixed methods and a small bounded, fully buffered response. Its framing assertion is valid only for that fixture and must not be copied to a streaming transport. Its memory-cache flag has not been independently audited as a complete borrowed-device privacy guarantee. Real HTTPS, redirects, partial/range responses, compression, concurrent and authenticated requests, cache invalidation, workspace separation, and process interruption require further implementation and adversarial testing. It continues to use a powerful Chrome debugger permission, a test-only virtual-file channel that must never carry secrets, and a fabricated Gecko security state. The extension cannot yet safely browse arbitrary sites.
+
+The matching isolated build uses `cookie-cache-native-engine/` as the last overlay on the prepared sign-in test builder; the local builder image and compiled engine are not included. Its `build.sh` records the patch order but is not a standalone builder.
 
 ```powershell
 $env:OUTPOST_COOKIE_CACHE_MATRIX = '1'
-node experiments/extension-chrome-context/run.mjs  # currently fails automatic cache revalidation
-$env:OUTPOST_EXPECT_CACHE_GAP = '1'
-node experiments/extension-chrome-context/run.mjs  # verifies the documented gap and other controls
-Remove-Item Env:OUTPOST_EXPECT_CACHE_GAP
+$env:OUTPOST_MATRIX_EXTENDED = '1'
+$env:OUTPOST_MATRIX_FAILURES = '1'
+node experiments/extension-chrome-context/run.mjs  # requires the native-cache test engine
+Remove-Item Env:OUTPOST_MATRIX_FAILURES
+Remove-Item Env:OUTPOST_MATRIX_EXTENDED
 Remove-Item Env:OUTPOST_COOKIE_CACHE_MATRIX
 ```
 

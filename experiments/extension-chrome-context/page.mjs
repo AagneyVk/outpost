@@ -13,6 +13,8 @@ try {
   const publicRestore = mode === 'public-demo-restore';
   const publicDemo = mode === 'public-demo' || publicLogout || publicSave || publicRestore;
   const matrix = mode === 'cookie-cache-matrix';
+  const matrixExtended = matrix && new URLSearchParams(location.search).get('extended') === '1';
+  const matrixFailures = matrixExtended && new URLSearchParams(location.search).get('failures') === '1';
   const signIn = mode === 'signin' || mode === 'signin-form' || mode === 'signin-form-bad';
   const formSignIn = mode === 'signin-form' || mode === 'signin-form-bad';
   const internal = mode.startsWith('internal');
@@ -25,7 +27,7 @@ try {
   if (httpsMode) httpsFixture = await (await import('./https-fixture.mjs')).createHttpsFixture({ delegated: mode === 'delegated', stateOnly, internal, tamper: mode.endsWith('-tamper'), noEvidence: mode.endsWith('-no-evidence'), noScriptEvidence: mode.endsWith('-no-script-evidence') });
   if (signIn) signInFixture = await (await import('./local-signin.mjs')).createLocalSignInFixture(new URLSearchParams(location.search).get('origin'), { form: formSignIn });
   if (publicDemo) publicFixture = await (await import('./public-signin.mjs')).createPublicSignInFixture({ logout: publicLogout });
-  if (matrix) matrixFixture = await (await import('./cookie-cache-fixture.mjs')).createCookieCacheFixture(new URLSearchParams(location.search).get('origin'));
+  if (matrix) matrixFixture = await (await import('./cookie-cache-fixture.mjs')).createCookieCacheFixture(new URLSearchParams(location.search).get('origin'), { extended: matrixExtended });
   const gecko = new Gecko({ canvas: document.querySelector('#screen'), width: 800, height: 600,
     wispUrl: 'ws://127.0.0.1:1/wisp/',
     wasm: { url: chrome.runtime.getURL('gecko.wasm.zst'), compressed: true },
@@ -60,12 +62,50 @@ try {
         const cacheSecond = await get('/matrix/cache');
         const conditional = await fetch('/matrix/cache', {headers:{'If-None-Match':'"fixture-v1"'}});
         const conditionalStatus = conditional.status, conditionalBody = await conditional.text();
+        const versionFirst = await get('/matrix/versioned');
+        const versionSecond = await get('/matrix/versioned');
+        const versionThird = await get('/matrix/versioned');
+        const freshFirst = await get('/matrix/fresh');
+        const cacheCookieSet = document.cookie.includes('cached_token=synthetic');
+        document.cookie = 'cached_token=; Max-Age=0; Path=/';
+        const freshSecond = await get('/matrix/fresh');
+        const cacheCookieReplayed = document.cookie.includes('cached_token=synthetic');
+        document.cookie = 'cached_token=; Max-Age=0; Path=/';
         const noStoreFirst = await get('/matrix/no-store');
         const noStoreSecond = await get('/matrix/no-store');
+        const cookieVaryFirst = ${matrixExtended} ? await get('/matrix/cookie-vary') : null;
         document.cookie = 'client=; Max-Age=0; Path=/';
+        const cookieVarySecond = ${matrixExtended} ? await get('/matrix/cookie-vary') : null;
+        const cookieVaryThird = ${matrixExtended} ? await get('/matrix/cookie-vary') : null;
         await get('/matrix/delete');
         const afterDelete = await get('/matrix/echo');
-        return { visible, privateCookie, publicCookie, cacheFirst, cacheSecond, conditionalStatus, conditionalBody, noStoreFirst, noStoreSecond, afterDelete };
+        let extended = null;
+        if (${matrixExtended}) {
+          const vary = async language => (await fetch('/matrix/vary', {headers:{'Accept-Language':language}})).text();
+          const varyValues = [await vary('en'), await vary('en'), await vary('fr'), await vary('fr')];
+          const binary = Array.from(new Uint8Array(await (await fetch('/matrix/binary')).arrayBuffer()));
+          const image = await new Promise(resolve => {
+            const img = new Image(), timer = setTimeout(() => resolve({ok:false}), 5000);
+            img.onload = () => { clearTimeout(timer); resolve({ok:true,width:img.naturalWidth,height:img.naturalHeight}); };
+            img.onerror = () => { clearTimeout(timer); resolve({ok:false}); };
+            img.src = '/matrix/image';
+          });
+          let truncated = null;
+          if (${matrixFailures}) {
+            const attempt = async () => {
+              try {
+                return await Promise.race([
+                  fetch('/matrix/truncated').then(response => response.text()).then(() => 'unexpected-success', () => 'failed'),
+                  new Promise(resolve => setTimeout(() => resolve('timeout'), 5000))
+                ]);
+              } catch { return 'failed'; }
+            };
+            truncated = [await attempt(), await attempt()];
+          }
+          extended = {varyValues, cookieVary: [cookieVaryFirst, cookieVarySecond, cookieVaryThird], binary, image, truncated};
+        }
+        return { visible, privateCookie, publicCookie, cacheFirst, cacheSecond, conditionalStatus, conditionalBody,
+          versionFirst, versionSecond, versionThird, freshFirst, freshSecond, cacheCookieSet, cacheCookieReplayed, noStoreFirst, noStoreSecond, afterDelete, extended };
       })().then(value => window.fixtureMatrix = JSON.stringify(value), error => window.fixtureMatrix = JSON.stringify({error:String(error)}));
       'started'`);
     for (let i = 0; i < 240; i++) {

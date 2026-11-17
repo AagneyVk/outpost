@@ -9,8 +9,12 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(dir, '../..');
 const fixtureBuild = process.env.OUTPOST_FIXTURE_BUILD && path.resolve(process.env.OUTPOST_FIXTURE_BUILD);
 const matrixTest = process.env.OUTPOST_COOKIE_CACHE_MATRIX === '1';
+const matrixExtended = process.env.OUTPOST_MATRIX_EXTENDED === '1';
+const matrixFailures = process.env.OUTPOST_MATRIX_FAILURES === '1';
 const expectCacheGap = process.env.OUTPOST_EXPECT_CACHE_GAP === '1';
 if (expectCacheGap && !matrixTest) throw Error('Cache gap control requires the matrix fixture');
+if (matrixExtended && (!matrixTest || expectCacheGap)) throw Error('Extended matrix requires its matching engine');
+if (matrixFailures && !matrixExtended) throw Error('Failure test requires the extended matrix');
 const directLogout = process.env.OUTPOST_PUBLIC_DEMO_LOGOUT_DIRECT === '1';
 const pointerLogout = process.env.OUTPOST_PUBLIC_DEMO_LOGOUT_POINTER === '1';
 const publicPortable = process.env.OUTPOST_PUBLIC_DEMO_PORTABLE === '1';
@@ -67,9 +71,11 @@ try {
     path.join(root, 'public/gecko-lab/engine/gecko-input-v7.wasm.zst'), path.join(addon, 'gecko.wasm.zst'));
   const observed = [];
   let noStoreVisits = 0;
+  const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==', 'base64');
   server = http.createServer((req, res) => {
     if (matrixTest && req.url.startsWith('/matrix/')) {
-      const item = { path: req.url, method: req.method, cookie: req.headers.cookie || '', marker: req.headers['x-outpost-fixture-id'] || '', validator: req.headers['if-none-match'] || '' };
+      const item = { path: req.url, method: req.method, cookie: req.headers.cookie || '', marker: req.headers['x-outpost-fixture-id'] || '', validator: req.headers['if-none-match'] || '',
+        ...(req.url === '/matrix/vary' ? { language: req.headers['accept-language'] || '' } : {}) };
       observed.push(item);
       if (req.url === '/matrix/home') return res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }).end('<!doctype html><title>Matrix fixture</title>');
       if (req.url === '/matrix/set') return res.writeHead(200, { 'Set-Cookie': ['workspace=alpha; HttpOnly; Path=/', 'scoped=beta; Path=/matrix/private'], 'Cache-Control': 'no-store' }).end('set');
@@ -79,6 +85,22 @@ try {
       if (req.url === '/matrix/cache') return req.headers['if-none-match'] === '"fixture-v1"'
         ? res.writeHead(304, { 'Cache-Control': 'no-cache', ETag: '"fixture-v1"' }).end()
         : res.writeHead(200, { 'Cache-Control': 'no-cache', ETag: '"fixture-v1"' }).end('cache-body-v1');
+      if (req.url === '/matrix/versioned') return req.headers['if-none-match'] === '"fixture-v2"'
+        ? res.writeHead(304, { 'Cache-Control': 'no-cache', ETag: '"fixture-v2"' }).end()
+        : req.headers['if-none-match'] === '"fixture-v1"'
+          ? res.writeHead(200, { 'Cache-Control': 'no-cache', ETag: '"fixture-v2"' }).end('version-2')
+          : res.writeHead(200, { 'Cache-Control': 'no-cache', ETag: '"fixture-v1"' }).end('version-1');
+      if (req.url === '/matrix/fresh') return res.writeHead(200, { 'Cache-Control': 'private, max-age=600', 'Set-Cookie': 'cached_token=synthetic; Path=/' }).end('fresh-body');
+      if (req.url === '/matrix/vary') return res.writeHead(200, { 'Cache-Control': 'private, max-age=600', Vary: 'Accept-Language' }).end('language-' + item.language);
+      if (req.url === '/matrix/cookie-vary') return res.writeHead(200, { 'Cache-Control': 'private, max-age=600', Vary: 'Cookie' })
+        .end(item.cookie.includes('client=synthetic') ? 'client-present' : 'client-absent');
+      if (req.url === '/matrix/binary') return res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' }).end(Buffer.from([0, 127, 128, 255]));
+      if (req.url === '/matrix/image') return res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(pngBytes);
+      if (req.url === '/matrix/truncated') {
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': '128', 'Cache-Control': 'private, max-age=600' });
+        res.write('short');
+        return setTimeout(() => res.destroy(), 50);
+      }
       if (req.url === '/matrix/no-store') return res.writeHead(200, { 'Cache-Control': 'no-store' }).end('visit-' + (++noStoreVisits));
       return res.writeHead(404).end();
     }
@@ -120,11 +142,11 @@ try {
   const { id } = await cdp.send('Extensions.loadUnpacked', { path: addon });
   await cdp.detach();
   const page = await context.newPage();
-  const errors = [];
-  page.on('pageerror', error => errors.push(String(error)));
+  const errors = [], pageErrors = [];
+  page.on('pageerror', error => { pageErrors.push(String(error)); errors.push(String(error)); });
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text().slice(0, 500)); });
   const stateMode = internal ? 'internal' : 'state';
-  const query = matrixTest ? '?' + new URLSearchParams({ mode: 'cookie-cache-matrix', origin: fixtureOrigin }) : publicDemo ? (directLogout ? '?mode=public-demo-logout-direct' : pointerLogout ? '?mode=public-demo-logout-pointer' : publicLogout ? '?mode=public-demo-logout' : publicPortable ? '?mode=public-demo-save' : '?mode=public-demo') : signInTest ? '?' + new URLSearchParams({ mode: wrongSignIn ? 'signin-form-bad' : formSignIn ? 'signin-form' : 'signin', origin: fixtureOrigin }) :
+  const query = matrixTest ? '?' + new URLSearchParams({ mode: 'cookie-cache-matrix', origin: fixtureOrigin, ...(matrixExtended ? { extended: '1' } : {}), ...(matrixFailures ? { failures: '1' } : {}) }) : publicDemo ? (directLogout ? '?mode=public-demo-logout-direct' : pointerLogout ? '?mode=public-demo-logout-pointer' : publicLogout ? '?mode=public-demo-logout' : publicPortable ? '?mode=public-demo-save' : '?mode=public-demo') : signInTest ? '?' + new URLSearchParams({ mode: wrongSignIn ? 'signin-form-bad' : formSignIn ? 'signin-form' : 'signin', origin: fixtureOrigin }) :
     fixtureBuild ? (stateOnly ? '?mode=' + stateMode + (tamper ? '-tamper' : noEvidence ? '-no-evidence' : noScriptEvidence ? '-no-script-evidence' : '') : delegated ? '?mode=delegated' : '?mode=https') : '';
   await page.goto('chrome-extension://' + id + '/index.html' + query);
   if (pointerLogout) {
@@ -152,7 +174,8 @@ try {
     catch { read = 'rejected'; }
     return { messaging, read };
   }, id);
-  console.log(JSON.stringify({ chrome: context.browser().version(), result, boundary, observed, errors: errors.slice(-10) }, null, 2));
+  console.log(JSON.stringify({ chrome: context.browser().version(), result, boundary, observed, pageErrors,
+    errors: errors.slice(-10), ...(matrixTest ? { cacheDiagnostics: errors.filter(message => message.includes('MATRIX_CACHE')) } : {}) }, null, 2));
   assert.equal(result.crossOriginIsolated, true);
   assert.equal(result.sharedArrayBuffer, 'function');
   assert.equal(result.suspending, 'function');
@@ -282,6 +305,7 @@ try {
   assert.notEqual(boundary.messaging, 'accepted');
   assert.equal(boundary.read, 'rejected');
   if (matrixTest) {
+    assert.deepEqual(pageErrors, []);
     assert.deepEqual(result.matrixErrors, []);
     assert.ok(result.matrix, 'matrix result missing');
     assert.equal(result.matrix.visible.includes('workspace='), false, 'HttpOnly cookie must be hidden');
@@ -289,10 +313,33 @@ try {
     assert.deepEqual(new Set(result.matrix.privateCookie.split('; ')), new Set(['workspace=alpha', 'scoped=beta', 'client=synthetic']));
     assert.deepEqual(new Set(result.matrix.publicCookie.split('; ')), new Set(['workspace=alpha', 'client=synthetic']));
     assert.equal(result.matrix.afterDelete, '');
+    if (matrixExtended) {
+      assert.deepEqual(result.matrix.extended, { varyValues: ['language-en', 'language-en', 'language-fr', 'language-fr'],
+        cookieVary: ['client-present', 'client-absent', 'client-absent'],
+        binary: [0, 127, 128, 255], image: { ok: true, width: 1, height: 1 }, truncated: matrixFailures ? ['failed', 'failed'] : null });
+      assert.deepEqual(observed.filter(item => item.path === '/matrix/vary').map(item => item.language), ['en', 'fr'],
+        'cache must distinguish Vary request values');
+      assert.equal(observed.filter(item => item.path === '/matrix/cookie-vary').length, 2,
+        'cache must distinguish cookie changes and reuse only the correct variant');
+      if (matrixFailures) assert.equal(observed.filter(item => item.path === '/matrix/truncated').length, 2,
+        'truncated response must not be cached');
+      if (matrixFailures) assert.equal(result.matrixTransport.interruptions.length, 2,
+        'late interruptions must be correlated to their synthetic requests');
+    }
     assert.equal(result.matrix.cacheFirst, 'cache-body-v1');
     assert.equal(result.matrix.cacheSecond, 'cache-body-v1');
     assert.equal(result.matrix.conditionalStatus, 304);
     assert.equal(result.matrix.conditionalBody, '');
+    assert.equal(result.matrix.versionFirst, 'version-1');
+    assert.equal(result.matrix.versionSecond, expectCacheGap ? 'version-1' : 'version-2');
+    assert.equal(result.matrix.versionThird, expectCacheGap ? 'version-1' : 'version-2');
+    assert.deepEqual(observed.filter(item => item.path === '/matrix/versioned').map(item => item.validator),
+      expectCacheGap ? ['', '', ''] : ['', '"fixture-v1"', '"fixture-v2"'], 'changed response must replace the cached version');
+    assert.equal(result.matrix.freshFirst, 'fresh-body');
+    assert.equal(result.matrix.freshSecond, 'fresh-body');
+    assert.equal(result.matrix.cacheCookieSet, true);
+    assert.equal(result.matrix.cacheCookieReplayed, expectCacheGap, 'cached responses must not replay Set-Cookie');
+    assert.equal(observed.filter(item => item.path === '/matrix/fresh').length, expectCacheGap ? 2 : 1, 'fresh cached resource should be reused');
     assert.equal(result.matrix.noStoreFirst, 'visit-1');
     assert.equal(result.matrix.noStoreSecond, 'visit-2');
     assert.deepEqual(observed.filter(item => item.path === '/matrix/cache').map(item => item.validator),
