@@ -8,6 +8,12 @@ On the tested Chrome 157, the top-level extension page was cross-origin isolated
 
 The optional HTTPS mode uses a separately patched research Gecko build and an extension-owned fixed-origin fetch. Chrome's debugger matches the host response and response body using a network request ID. It obtains a certificate chain with `Network.getCertificate`, but that lookup is **origin-keyed**, so it does not prove the chain belongs to the exact request. The HTTPS test injects a synthetic HSTS header; it does not test actual HSTS or redirects. Its transport serializes one fixed request, buffers the body and fabricates Gecko security information. The temporary HTTPS test extension requests Chrome's powerful `debugger` and `tabs` permissions; these may be unsuitable for a product and this experiment is not a recommendation to request them. The basic context test does not request these permissions.
 
+There is also an experimental **delegated trust** mode. It keeps the fixture engine and network code within the extension page and accepts Chrome's TLS decision and request-specific `webRequest` certificate data. In the controlled Chrome 157 test, it displayed the top-level example.com document even when Chrome trusted the Norton inspection root, and the Gecko leaf fingerprint matched Chrome's request event. Chrome rejected the expired and self-signed badssl sites. The synthetic test intentionally does not load all page resources: its navigation-status flag reports failure when a subresource is blocked, so this is not a successful full-page compatibility test.
+
+**The delegated engine is unsafe to distribute.** Its test-only Gecko patch accepts a fabricated header as proof of transport security and cannot enforce the extension's trust boundary itself. The test depends on Chrome's developer feature flag, a powerful debugger permission, a single serialized request, a synthetic HSTS header and no redirects. It does not establish that this can safely handle real websites or credentials. No such patch is included in the release engine.
+
+Chrome's [webRequest documentation](https://developer.chrome.com/docs/extensions/reference/api/webRequest) describes certificate metadata, but in the tested Chrome 157 a normal listener observed the response while the security details were missing without the experimental `WebRequestSecurityInfo` feature. With the flag, a request-specific DER certificate and matching fingerprint were returned. Without that evidence, the delegated fixture fails closed.
+
 On this machine Chrome reports that the connection to example.com is issued by Norton Web/Mail Shield Root. Chrome accepted the host connection, but the test Gecko verifier returned NSS `SEC_ERROR_UNKNOWN_ISSUER` (-8179) and rejected the navigation. The guest does not automatically inherit Chrome's trust decisions or trust store. Chrome rejected the expired.badssl.com connection with `ERR_CERT_DATE_INVALID`. No certificate exceptions or user trust-store changes were made.
 
 ## Run
@@ -16,6 +22,8 @@ Install this repository's Node dependencies and a current Chrome, then run from 
 
 ```powershell
 node experiments/extension-chrome-context/run.mjs
+node --test experiments/extension-chrome-context/response-binding.test.mjs
+node experiments/extension-chrome-context/run-webrequest.mjs
 ```
 
 The runner uses Chrome's unsafe-extension-debugging flag only for a disposable profile to load this temporary, unpacked fixture. It deletes the profile and temporary extension afterward. Set `OUTPOST_CHROME` for a nonstandard browser path. The runner copies the existing v7 engine into the temporary extension; it does not change the production engine.
@@ -33,6 +41,21 @@ Remove-Item Env:OUTPOST_FIXTURE_BUILD
 ```
 
 Without `OUTPOST_EXPECT_REJECTION`, HTTPS mode instead requires Gecko to load the valid page. That positive result has not been established on this machine. Neither setting bypasses certificate validation.
+
+For delegated trust, use a **separate test-only** build made with `delegated-engine/` as `/lab` in the matching local builder. Its source is provided to make the experiment reviewable, not as a production build. The local builder image and preparation are not included. Set `OUTPOST_FIXTURE_BUILD` to its output and run this diagnostic comparison:
+
+```powershell
+$env:OUTPOST_DELEGATED_TEST = '1'
+$env:OUTPOST_EXPECT_MISSING_INFO = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_EXPECT_MISSING_INFO
+$env:OUTPOST_ENABLE_SECURITY_INFO = '1'
+node experiments/extension-chrome-context/run.mjs
+Remove-Item Env:OUTPOST_ENABLE_SECURITY_INFO
+Remove-Item Env:OUTPOST_DELEGATED_TEST
+```
+
+The first run confirms it fails closed without the metadata. The second runs Chrome with a developer flag for research only; it must not be presented as an ordinary user setup. The engine's `navigation` field can be `failed` because the fixture blocks subresources even when the main example.com document is displayed.
 
 ## Work still required
 

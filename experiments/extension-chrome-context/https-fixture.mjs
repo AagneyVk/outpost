@@ -1,25 +1,37 @@
 // Disposable fixed-origin test. Not a general network bridge.
-export async function createHttpsFixture() {
+import { validateResponseBinding } from './response-binding.mjs';
+export async function createHttpsFixture({ delegated = false } = {}) {
   const target = { tabId: (await chrome.tabs.getCurrent()).id };
-  const requests = new Map(), responses = new Map(), failures = new Map();
+  const requests = new Map(), responses = new Map(), failures = new Map(), redirects = new Set();
   const report = { requested: 0 };
+  const certEvents = [];
+  const certListener = details => {
+    if (details.url === 'https://example.com/') certEvents.push(details);
+  };
+  if (delegated) chrome.webRequest.onHeadersReceived.addListener(certListener,
+    { urls: ['https://example.com/*'], types: ['xmlhttprequest'] }, ['securityInfo', 'securityInfoRawDer']);
   const listener = (source, method, params) => {
     if (source.tabId !== target.tabId) return;
-    if (method === 'Network.requestWillBeSent' && !params.redirectResponse)
-      requests.set(params.requestId, params.request.url);
+    if (method === 'Network.requestWillBeSent') {
+      if (params.redirectResponse) redirects.add(params.requestId);
+      else requests.set(params.requestId, params.request.url);
+    }
     if (method === 'Network.responseReceived') responses.set(params.requestId, params.response);
     if (method === 'Network.loadingFailed') failures.set(params.requestId, params.errorText);
   };
   chrome.debugger.onEvent.addListener(listener);
   await chrome.debugger.attach(target, '1.3');
   await chrome.debugger.sendCommand(target, 'Network.enable');
-  const expired = 'https://expired.badssl.com/';
-  try { await fetch(expired, { credentials: 'omit', cache: 'no-store',
-    redirect: 'error', signal: AbortSignal.timeout(10000) }); } catch { /* inspect the network error */ }
-  for (let i = 0; i < 40 && ![...requests].some(([id, requestUrl]) => requestUrl === expired && failures.has(id)); i++)
-    await new Promise(resolve => setTimeout(resolve, 25));
-  report.expiredRejected = [...requests].some(([id, requestUrl]) => requestUrl === expired &&
-    failures.get(id) === 'net::ERR_CERT_DATE_INVALID' && !responses.has(id));
+  async function rejectedWith(url, code) {
+    try { await fetch(url, { credentials: 'omit', cache: 'no-store',
+      redirect: 'error', signal: AbortSignal.timeout(10000) }); } catch { /* inspect the network error */ }
+    for (let i = 0; i < 40 && ![...requests].some(([id, requestUrl]) => requestUrl === url && failures.has(id)); i++)
+      await new Promise(resolve => setTimeout(resolve, 25));
+    return [...requests].some(([id, requestUrl]) => requestUrl === url &&
+      failures.get(id) === code && !responses.has(id));
+  }
+  report.expiredRejected = await rejectedWith('https://expired.badssl.com/', 'net::ERR_CERT_DATE_INVALID');
+  report.selfSignedRejected = await rejectedWith('https://self-signed.badssl.com/', 'net::ERR_CERT_AUTHORITY_INVALID');
   const url = 'https://example.com/';
   const fs = {
     async stat(path) { return path === 'outpost-fixture-example' ? { size: 262144, isDir: false } : null; },
@@ -27,30 +39,48 @@ export async function createHttpsFixture() {
     async readFile(path) {
       if (path !== 'outpost-fixture-example' || report.requested++) throw Error('Unexpected fixture request');
       const response = await fetch(url, { credentials: 'omit', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10000) });
-      const body = await response.text();
+      const bodyBytes = new Uint8Array(await response.arrayBuffer());
       for (let i = 0; i < 100 && ![...responses.values()].some(item => item.url === url); i++)
         await new Promise(resolve => setTimeout(resolve, 25));
       const matches = [...responses].filter(([id, item]) => requests.get(id) === url && item.url === url);
       if (matches.length !== 1) throw Error('No unique request-bound response');
       const [[requestId, event]] = matches;
-      if (event.securityState !== 'secure' || event.status !== response.status || failures.has(requestId))
-        throw Error('Host did not report a secure matching response');
       const captured = await chrome.debugger.sendCommand(target, 'Network.getResponseBody', { requestId });
-      const capturedBody = captured.base64Encoded ? new TextDecoder().decode(Uint8Array.from(atob(captured.body), c => c.charCodeAt(0))) : captured.body;
-      if (capturedBody !== body) throw Error('Debugger body mismatch');
-      const cert = await chrome.debugger.sendCommand(target, 'Network.getCertificate', { origin: 'https://example.com' });
-      if (!cert.tableNames?.length) throw Error('No certificate chain');
+      const capturedBody = captured.base64Encoded ? Uint8Array.from(atob(captured.body), c => c.charCodeAt(0)) : new TextEncoder().encode(captured.body);
+      validateResponseBinding({ url, status: response.status, finalURL: response.url,
+        body: bodyBytes, capturedBody, requests, responses, failures, redirects });
+      const body = new TextDecoder('utf-8', { fatal: true }).decode(bodyBytes);
+      let chain;
+      if (delegated) {
+        for (let i = 0; i < 40 && !certEvents.length; i++) await new Promise(resolve => setTimeout(resolve, 25));
+        if (certEvents.length !== 1 || certEvents[0].statusCode !== response.status ||
+            certEvents[0].securityInfo?.state !== 'secure') throw Error('No unique request-bound secure certificate');
+        const certificates = certEvents[0].securityInfo.certificates || [];
+        if (!certificates.length || certificates.some(item => !item.rawDER?.byteLength)) throw Error('Missing request-bound certificate bytes');
+        for (const cert of certificates) {
+          const digest = await crypto.subtle.digest('SHA-256', cert.rawDER);
+          const fingerprint = [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('').toUpperCase();
+          if (fingerprint !== cert.fingerprint.sha256.replace(/:/g, '').toUpperCase()) throw Error('Certificate fingerprint mismatch');
+          if (!report.leafFingerprint) report.leafFingerprint = fingerprint;
+        }
+        chain = certificates.map(item => btoa(String.fromCharCode(...new Uint8Array(item.rawDER))));
+        report.requestBoundCertificate = true;
+      } else {
+        const cert = await chrome.debugger.sendCommand(target, 'Network.getCertificate', { origin: 'https://example.com' });
+        if (!cert.tableNames?.length) throw Error('No certificate chain');
+        chain = cert.tableNames;
+      }
       const protocol = event.securityDetails?.protocol === 'TLS 1.3' ? 'TLSv1.3' :
         event.securityDetails?.protocol === 'TLS 1.2' ? 'TLSv1.2' : null;
       if (!protocol) throw Error('Unsupported TLS version');
       report.hostSecure = true;
       report.hostIssuer = event.securityDetails.issuer;
       report.bodyMatched = true;
-      report.chainCount = cert.tableNames.length;
+      report.chainCount = chain.length;
       // getCertificate is origin-keyed, not request-keyed; this fixture does
       // not establish request-bound chain evidence. Gecko must verify it.
       const wire = [String(response.status), '', '', '', 'text/html; charset=utf-8',
-        ['v1', protocol, ...cert.tableNames].join(':'), 'max-age=600', body].join('\n');
+        [delegated ? 'v2' : 'v1', protocol, ...chain].join(':'), 'max-age=600', body].join('\n');
       const bytes = new TextEncoder().encode(wire);
       if (bytes.length >= 262144) throw Error('Fixture response too large');
       const padded = new Uint8Array(262144);
@@ -60,6 +90,7 @@ export async function createHttpsFixture() {
   };
   return { fs, report, async close() {
     chrome.debugger.onEvent.removeListener(listener);
+    if (delegated) chrome.webRequest.onHeadersReceived.removeListener(certListener);
     await chrome.debugger.detach(target);
   } };
 }
