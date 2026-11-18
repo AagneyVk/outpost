@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { WebSocketServer } from 'ws';
+import { recordMaxAge, maxAgeForRestore } from './max-age-record.mjs';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(dir, '../..');
@@ -41,6 +42,7 @@ try {
       'http_token=synthetic; HttpOnly; Secure; SameSite=None; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/',
       'path_scope=synthetic; HttpOnly; Secure; SameSite=None; Path=/private',
       'temporary=synthetic; HttpOnly; Secure; SameSite=None; Max-Age=2; Path=/',
+      'age_bound=synthetic; HttpOnly; Secure; SameSite=None; Max-Age=30; Path=/',
       'rejected_synthetic=bad; Domain=example.invalid; Secure; SameSite=None; Path=/'
     ];
     response.writeHead(200, headers).end('synthetic');
@@ -64,6 +66,7 @@ try {
     background: { service_worker: 'credentialless-listener.js' },
     host_permissions: ['http://localhost/*', 'https://localhost/*', 'ws://localhost/*'] }));
   await fs.copyFile(path.join(dir, 'credentialless-listener.js'), path.join(addon, 'credentialless-listener.js'));
+  for (const name of ['guarded-restore.html', 'guarded-restore.mjs']) await fs.copyFile(path.join(dir, name), path.join(addon, name));
   await fs.copyFile(path.join(root, 'public/portable.js'), path.join(addon, 'portable.js'));
   await fs.writeFile(path.join(addon, 'empty.html'), '<!doctype html><meta charset="utf-8"><title>Disposable fixture</title>');
   context = await chromium.launchPersistentContext(profile, {
@@ -123,6 +126,7 @@ try {
   await fetchProbe(normal, 'normal-http');
   await fetchProbe(isolated, 'a-http');
   await fetchProbe(second, 'b-http');
+  const cookieRequestStartedAt = Date.now();
   await fetchProbe(isolated, 'a-http-set');
   const shortCookieObservedAt = Date.now();
   assert.deepEqual(httpObserved.map(({ label, cookie }) => [label, cookie]), [
@@ -139,9 +143,12 @@ try {
   }
   const httpSetEvent = responseEvents.find(event => event.url.includes('label=a-http-set'));
   assert.deepEqual([httpSetEvent.tabId, httpSetEvent.frameId], [frameIds[1].tabId, frameIds[1].frameId]);
-  assert.equal(httpSetEvent.headers.length, 5);
+  assert.equal(httpSetEvent.headers.length, 6);
   assert.ok(httpSetEvent.headers.some(header => header.value.includes('Wed, 21 Oct 2037')));
   assert.ok(httpSetEvent.headers.some(header => header.value.startsWith('rejected_synthetic=')));
+  const ageRecord = recordMaxAge(httpSetEvent.headers.find(header => header.value.startsWith('age_bound=synthetic;')).value, cookieRequestStartedAt);
+  const sourceBoundCookie = (await context.cookies()).find(cookie => cookie.name === 'age_bound');
+  assert.ok(sourceBoundCookie?.expires > Date.now() / 1000);
   const privateUrl = 'http://localhost:' + server.address().port + '/private/check?label=source';
   assert.equal(await isolated.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), privateUrl), 'private-check');
   assert.match(privateObserved[0].cookie, /(?:^|;\s*)path_scope=synthetic(?:;|$)/);
@@ -300,13 +307,13 @@ try {
   const syntheticCookies = [syntheticCookie, ...httpSetEvent.headers.map(header => header.value)
     .filter(value => value.startsWith('preference=alpha;') || value.startsWith('http_token=synthetic;') || value.startsWith('path_scope=synthetic;'))];
   assert.equal(syntheticCookies.length, 4);
-  const exportBytes = await page.evaluate(async cookies => {
+  const exportBytes = await page.evaluate(async ({ cookies, ageRecord }) => {
     const { seal } = await import(chrome.runtime.getURL('portable.js'));
-    const payload = new TextEncoder().encode(JSON.stringify({ format: 'synthetic-v1', cookies }));
+    const payload = new TextEncoder().encode(JSON.stringify({ format: 'synthetic-v1', cookies, ageRecord }));
     const blob = await seal(payload, 'synthetic-test-passphrase!', '0'.repeat(64));
     payload.fill(0);
     return [...new Uint8Array(await blob.arrayBuffer())];
-  }, syntheticCookies);
+  }, { cookies: syntheticCookies, ageRecord });
   assert.equal(Buffer.from(exportBytes).includes(Buffer.from('workspace_session=alpha')), false);
   profile2 = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
   context2 = await chromium.launchPersistentContext(profile2, {
@@ -335,27 +342,32 @@ try {
   assert.deepEqual(await decrypt(tampered, 'synthetic-test-passphrase!'), { error: 'rejected' });
   assert.equal(networkRestoreRequests.length, restoreRequestCount, 'invalid exports must not trigger restore traffic');
   const decrypted = await decrypt(exportBytes, 'synthetic-test-passphrase!');
-  assert.deepEqual(decrypted, { value: { format: 'synthetic-v1', cookies: syntheticCookies } });
+  assert.deepEqual(decrypted, { value: { format: 'synthetic-v1', cookies: syntheticCookies, ageRecord } });
+  const ageForRestore = maxAgeForRestore(decrypted.value.ageRecord, Date.now());
+  assert.ok(ageForRestore, 'test Max-Age cookie must still be live');
   const deviceUrl = 'http://localhost:' + server.address().port + '/restore-network?' + new URLSearchParams({ token: crypto.randomUUID() });
   const deviceRule = await devicePage.evaluate(async ({ url, cookies }) => {
-    if (JSON.stringify(cookies) !== JSON.stringify([
+    if (JSON.stringify(cookies.slice(0, 4)) !== JSON.stringify([
       'workspace_session=alpha; HttpOnly; Secure; SameSite=None; Path=/',
       'preference=alpha; Secure; SameSite=None; Path=/',
       'http_token=synthetic; HttpOnly; Secure; SameSite=None; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/',
       'path_scope=synthetic; HttpOnly; Secure; SameSite=None; Path=/private'
-    ])) throw Error('Synthetic cookies required');
+    ]) || cookies.length !== 5 || !/^age_bound=synthetic; HttpOnly; Secure; SameSite=None; Max-Age=\d+; Path=\/$/.test(cookies[4])) throw Error('Synthetic cookies required');
     const tabId = (await chrome.tabs.getCurrent()).id, escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId], addRules: [{ id: tabId, priority: 2,
       action: { type: 'modifyHeaders', requestHeaders: [{ header: 'Cookie', operation: 'remove' }, { header: 'Authorization', operation: 'remove' }],
         responseHeaders: cookies.map(value => ({ header: 'Set-Cookie', operation: 'append', value })) },
       condition: { regexFilter: '^' + escaped + '$', initiatorDomains: [chrome.runtime.id], tabIds: [tabId], resourceTypes: ['xmlhttprequest'] } }] });
     return tabId;
-  }, { url: deviceUrl, cookies: decrypted.value.cookies });
+  }, { url: deviceUrl, cookies: [...decrypted.value.cookies, ageForRestore] });
   try {
     assert.equal(await deviceFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), deviceUrl), 'network-restore');
   } finally { await devicePage.evaluate(ruleId => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }), deviceRule); }
   assert.deepEqual(networkRestoreRequests.slice(restoreRequestCount), ['']);
   assert.deepEqual(networkRestoreAuthorization.slice(restoreRequestCount), ['']);
+  const restoredBoundCookie = (await context2.cookies()).find(cookie => cookie.name === 'age_bound');
+  assert.ok(restoredBoundCookie?.expires > Date.now() / 1000);
+  assert.ok(restoredBoundCookie.expires <= sourceBoundCookie.expires, 'restore must not extend original Max-Age expiry');
   await open(deviceFrame, 'device-restored');
   await open(deviceNormal, 'device-host-after');
   const devicePrivateUrl = 'http://localhost:' + server.address().port + '/private/check?label=restored';
@@ -366,14 +378,15 @@ try {
   await open(deviceFrame, 'device-after-delete');
   // Unsafe control: deliberately retain a synthetic restore rule across a
   // top-level reload, then repeat its exact local URL from the new frame.
-  const staleRule = await devicePage.evaluate(async url => {
+  async function stageStaleRule(owner) { return owner.evaluate(async url => {
     const tabId = (await chrome.tabs.getCurrent()).id, escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId], addRules: [{ id: tabId, priority: 2,
       action: { type: 'modifyHeaders', requestHeaders: [{ header: 'Cookie', operation: 'remove' }],
         responseHeaders: [{ header: 'Set-Cookie', operation: 'append', value: 'workspace_session=stale; HttpOnly; Secure; SameSite=None; Path=/' }] },
       condition: { regexFilter: '^' + escaped + '$', initiatorDomains: [chrome.runtime.id], tabIds: [tabId], resourceTypes: ['xmlhttprequest'] } }] });
     return tabId;
-  }, deviceUrl);
+  }, deviceUrl); }
+  const staleRule = await stageStaleRule(devicePage);
   try {
     await devicePage.reload();
     assert.ok((await devicePage.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).some(rule => rule.id === staleRule));
@@ -382,6 +395,57 @@ try {
     assert.equal(await newDeviceFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), deviceUrl), 'network-restore');
     await open(newDeviceFrame, 'device-after-stale-rule');
   } finally { await devicePage.evaluate(ruleId => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }), staleRule); }
+  // Guarded control: kill the worker with a stale synthetic rule installed,
+  // then require cleanup to succeed before creating the new workspace frame.
+  const guardedRule = await stageStaleRule(devicePage);
+  const otherDevicePage = await context2.newPage();
+  await otherDevicePage.goto('chrome-extension://' + id + '/empty.html');
+  const otherDeviceRule = await stageStaleRule(otherDevicePage);
+  assert.notEqual(guardedRule, otherDeviceRule);
+  assert.equal(await devicePage.evaluate(() => chrome.runtime.sendMessage('ping')), 'ready');
+  const stopCdp = await context2.browser().newBrowserCDPSession();
+  const targets = await stopCdp.send('Target.getTargets');
+  const worker = targets.targetInfos.find(item => item.type === 'service_worker' && item.url === 'chrome-extension://' + id + '/credentialless-listener.js');
+  assert.ok(worker, 'synthetic extension worker must be running');
+  await stopCdp.send('Target.closeTarget', { targetId: worker.targetId });
+  await stopCdp.detach();
+  await devicePage.reload();
+  assert.ok((await devicePage.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).some(rule => rule.id === guardedRule));
+  const beforeGuardedStart = observed.length + networkRestoreRequests.length;
+  await devicePage.goto('chrome-extension://' + id + '/guarded-restore.html');
+  await devicePage.waitForFunction(() => fixtureGuardedReady || fixtureGuardedError, null, { timeout: 15000 });
+  assert.equal(await devicePage.evaluate(() => fixtureGuardedError), null);
+  assert.equal(observed.length + networkRestoreRequests.length, beforeGuardedStart, 'startup must not make a network request');
+  const afterCleanup = await devicePage.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
+  assert.equal(afterCleanup.some(rule => rule.id === guardedRule), false);
+  assert.equal(afterCleanup.some(rule => rule.id === otherDeviceRule), true, 'cleanup must preserve another tab rule');
+  const guardedFrame = await (await devicePage.locator('#guarded-frame').elementHandle()).contentFrame();
+  assert.equal(await guardedFrame.evaluate(() => window.credentialless), true);
+  assert.deepEqual(await guardedFrame.evaluate(() => chrome.runtime.sendMessage({ type: 'prepare-restore' })), { ready: false });
+  const beforeBlockedRawSocket = observed.length;
+  assert.equal(await devicePage.evaluate(url => new Promise(resolve => {
+    const socket = new WebSocket(url);
+    socket.onopen = () => { socket.close(); resolve('unexpected success'); };
+    socket.onerror = () => resolve('blocked');
+  }), endpoint + '?label=parent-blocked'), 'blocked');
+  assert.equal(observed.length, beforeBlockedRawSocket, 'guarded parent CSP must block its own raw socket');
+  await open(guardedFrame, 'device-guarded-before');
+  assert.equal(await guardedFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), deviceUrl), 'network-restore');
+  await open(guardedFrame, 'device-guarded-after');
+  await otherDevicePage.evaluate(ruleId => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }), otherDeviceRule);
+  const failurePage = await context2.newPage();
+  await failurePage.goto('chrome-extension://' + id + '/empty.html');
+  const failureRule = await stageStaleRule(failurePage);
+  try {
+    const beforeFailureStart = observed.length + networkRestoreRequests.length;
+    await failurePage.goto('chrome-extension://' + id + '/guarded-restore.html?fixture-cleanup-failure=1');
+    await failurePage.waitForFunction(() => fixtureGuardedReady || fixtureGuardedError, null, { timeout: 15000 });
+    assert.equal(await failurePage.evaluate(() => fixtureGuardedReady), false);
+    assert.equal(await failurePage.evaluate(() => fixtureGuardedError), 'Restore rule cleanup failed');
+    assert.equal(await failurePage.locator('#guarded-frame').count(), 0);
+    assert.equal(observed.length + networkRestoreRequests.length, beforeFailureStart, 'failed cleanup must not open the workspace or contact the server');
+    assert.ok((await failurePage.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).some(rule => rule.id === failureRule));
+  } finally { await failurePage.evaluate(ruleId => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }), failureRule); }
   // Unsafe control: replaying an old Max-Age header resets its lifetime.
   // The fixed test cookie is deliberately omitted from the encrypted export.
   const shortCookie = httpSetEvent.headers.find(header => header.value.startsWith('temporary=synthetic;')).value;
@@ -390,6 +454,8 @@ try {
   const expiryFrame = await frame(expiryPage, true);
   await new Promise(resolve => setTimeout(resolve, Math.max(0, shortCookieObservedAt + 2500 - Date.now())));
   await open(expiryFrame, 'expiry-before');
+  assert.equal(maxAgeForRestore(recordMaxAge(shortCookie, cookieRequestStartedAt), Date.now()), null);
+  await open(expiryFrame, 'expiry-after-safe-skip');
   const expiryUrl = 'http://localhost:' + server.address().port + '/restore-network?' + new URLSearchParams({ token: crypto.randomUUID() });
   const expiryRule = await expiryPage.evaluate(async ({ url, cookie }) => {
     const tabId = (await chrome.tabs.getCurrent()).id, escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -410,10 +476,11 @@ try {
     ['a-after-reload', ''], ['a-after-restore', ''], ['normal-after-restore', 'host_canary=synthetic-only; workspace_session=alpha'],
     ['network-before', ''], ['network-after', 'workspace_session=delta'],
     ['normal-after-network', 'host_canary=synthetic-only; workspace_session=alpha'], ['b-after-a-reload', 'workspace_session=beta'],
-    ['device-restored', 'workspace_session=alpha; preference=alpha; http_token=synthetic'], ['device-host-after', 'host_canary=other-device'],
-    ['device-after-delete', 'workspace_session=alpha; http_token=synthetic'],
+    ['device-restored', 'workspace_session=alpha; preference=alpha; http_token=synthetic; age_bound=synthetic'], ['device-host-after', 'host_canary=other-device'],
+    ['device-after-delete', 'workspace_session=alpha; http_token=synthetic; age_bound=synthetic'],
     ['device-new-before-stale', ''], ['device-after-stale-rule', 'workspace_session=stale'],
-    ['expiry-before', ''], ['expiry-after-raw-replay', 'temporary=synthetic']
+    ['device-guarded-before', ''], ['device-guarded-after', ''],
+    ['expiry-before', ''], ['expiry-after-safe-skip', ''], ['expiry-after-raw-replay', 'temporary=synthetic']
   ];
   assert.deepEqual(states, [false, true]);
   assert.deepEqual(observed.map(({ label, cookie }) => [label, cookie]), expected);
@@ -427,8 +494,13 @@ try {
     unsafeInterceptedRestorePollutedHostJar: true, interceptedRestoreDidNotRestoreWorkspace: true,
     networkHeaderRestoreWroteWorkspaceCookie: true, unsafeNetworkRestoreSentWorkspaceCookie: true,
     scopedHeaderRemovalPreventedSyntheticCookieAndAuthorization: true, credentiallessPartitionKeysNotSerializable: true,
-    fourSyntheticEncryptedCookiesTransferredToFreshProfile: true, restoredPathScopeAndDeletionChecked: true, wrongPasswordAndTamperingRejected: true,
+    fiveSyntheticEncryptedCookiesTransferredToFreshProfile: true, restoredPathScopeAndDeletionChecked: true, wrongPasswordAndTamperingRejected: true,
+    expiredMaxAgeCookieSkippedAndLiveExpiryNotExtended: true,
     unsafeStaleRestoreRuleCrossedReload: true,
+    guardedWorkerRestartClearedStaleRuleBeforeWorkspace: true,
+    cleanupRejectedSubframeAndPreservedOtherTab: true,
+    guardedStartupCreatedFrameOnlyAfterCleanup: true, guardedParentBlockedRawSocket: true,
+    simulatedCleanupFailureBlockedWorkspace: true,
     unsafeRawMaxAgeReplayRevivedExpiredCookie: true,
     debuggerListMixedHostAndWorkspaces: true, debuggerListDidNotIdentifyTheirPartitions: true,
     frameDebuggerSession: frameCdpCookies.error || 'available',
