@@ -1,14 +1,14 @@
 // Synthetic test only. Does not coordinate handshakes within the same tab.
 const params = new URLSearchParams(location.search);
 const url = params.get('url');
-if (!/^ws:\/\/127\.0\.0\.1:\d+\/socket$/.test(url)) throw Error('Invalid fixture URL');
+if (!/^wss?:\/\/(?:127\.0\.0\.1|localhost):\d+\/socket$/.test(url)) throw Error('Invalid fixture URL');
 const tab = await chrome.tabs.getCurrent();
 const ruleId = params.get('scope') === 'shared' ? 101 : tab.id;
 globalThis.fixtureInstallRule = async cookie => {
-  if (!['workspace_session=alpha', 'workspace_session=beta'].includes(cookie)) throw Error('Synthetic cookie required');
+  if (!['', 'workspace_session=alpha', 'workspace_session=beta'].includes(cookie)) throw Error('Synthetic cookie required');
   const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId], addRules: [{ id: ruleId, priority: 1,
-    action: { type: 'modifyHeaders', requestHeaders: [{ header: 'Cookie', operation: 'set', value: cookie }] },
+  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId], addRules: [{ id: ruleId, priority: 2,
+    action: { type: 'modifyHeaders', requestHeaders: [cookie ? { header: 'Cookie', operation: 'set', value: cookie } : { header: 'Cookie', operation: 'remove' }] },
     condition: { regexFilter: '^' + escaped + '$', initiatorDomains: [chrome.runtime.id],
       tabIds: [tab.id], resourceTypes: ['websocket'] } }] });
   return { tabId: tab.id, ruleId };
