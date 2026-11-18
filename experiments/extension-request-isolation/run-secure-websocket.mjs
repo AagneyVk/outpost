@@ -40,9 +40,10 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = 'wss://localhost:' + server.address().port + '/socket';
   for (const target of [addon, guardedAddon]) for (const name of ['race.html', 'race.mjs']) await fs.copyFile(path.join(dir, name), path.join(target, name));
+  for (const name of ['lifecycle.html', 'lifecycle.mjs', 'lifecycle-worker.js', 'worker-client.html', 'worker-client.mjs']) await fs.copyFile(path.join(dir, name), path.join(guardedAddon, name));
   const manifest = { manifest_version: 3,
     name: 'OUTPOST local WSS research fixture', version: '0.0.1',
-    permissions: ['tabs', 'debugger', 'declarativeNetRequest'], host_permissions: ['wss://localhost/*'] };
+    permissions: ['tabs', 'debugger', 'webRequest', 'declarativeNetRequest'], host_permissions: ['wss://localhost/*'] };
   await fs.writeFile(path.join(addon, 'manifest.json'), JSON.stringify(manifest));
   // A public key pins the disposable extension ID, allowing a static rule to
   // match only its own initiator. The generated private key is never persisted.
@@ -55,6 +56,7 @@ try {
     condition: { initiatorDomains: [id], resourceTypes: ['websocket'] } }]));
   await fs.writeFile(path.join(guardedAddon, 'manifest.json'), JSON.stringify({ ...manifest,
     name: 'OUTPOST guarded local WSS research fixture', key: publicDer.toString('base64'),
+    background: { service_worker: 'lifecycle-worker.js' },
     declarative_net_request: { rule_resources: [{ id: 'baseline', enabled: true, path: 'rules.json' }] } }));
 
   async function openFixture(label, allowLocalhost, guarded) {
@@ -62,9 +64,10 @@ try {
     const context = await chromium.launchPersistentContext(profile, {
       ...(process.env.OUTPOST_CHROME ? { executablePath: process.env.OUTPOST_CHROME } : { channel: 'chrome' }),
       headless: true, ignoreDefaultArgs: ['--disable-extensions'],
-      args: ['--enable-unsafe-extension-debugging', ...(allowLocalhost ? ['--allow-insecure-localhost'] : [])]
+      args: ['--enable-unsafe-extension-debugging', ...(allowLocalhost === 'all' ? ['--ignore-certificate-errors'] : allowLocalhost ? ['--allow-insecure-localhost'] : [])]
     });
     contexts.push(context);
+    context.on('serviceworker', worker => worker.on('console', message => { if (message.type() === 'error') console.error('Fixture worker:', message.text()); }));
     await context.addCookies([{ name: 'host_canary', value: 'synthetic-only', domain: 'localhost', path: '/', sameSite: 'None', secure: true }]);
     assert.ok((await context.cookies()).some(cookie => cookie.name === 'host_canary'));
     const cdp = await context.browser().newBrowserCDPSession();
@@ -137,11 +140,87 @@ try {
   const hostCookies = await context.cookies();
   assert.ok(hostCookies.some(cookie => cookie.name === 'host_canary'));
   assert.equal(hostCookies.some(cookie => cookie.name === 'workspace_session'), false);
+
+  // A separate broker prototype clears stale overrides before allowing this
+  // fixture page to create a socket. It is not used by the OUTPOST extension.
+  const lifecycle = await context.newPage();
+  const lifecycleUrl = 'chrome-extension://' + id + '/lifecycle.html?' + new URLSearchParams({ url });
+  await lifecycle.goto(lifecycleUrl);
+  await lifecycle.evaluate(() => fixtureReady);
+  await lifecycle.evaluate(() => fixtureStage('workspace_session=alpha'));
+  assert.equal((await lifecycle.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).length, 1);
+  await lifecycle.reload();
+  await lifecycle.evaluate(() => fixtureReady);
+  assert.deepEqual(await lifecycle.evaluate(() => chrome.declarativeNetRequest.getSessionRules()), []);
+  const beforeLifecycle = observed.length;
+  assert.equal(await lifecycle.evaluate(() => fixtureOpen('workspace_session=beta')), 'echo');
+  assert.deepEqual(observed.slice(beforeLifecycle), ['workspace_session=beta']);
+  assert.deepEqual(await lifecycle.evaluate(() => chrome.declarativeNetRequest.getSessionRules()), []);
+
+  await lifecycle.evaluate(() => fixtureStage('workspace_session=alpha'));
+  const workerCdp = await context.browser().newBrowserCDPSession();
+  const targets = await workerCdp.send('Target.getTargets');
+  const worker = targets.targetInfos.find(item => item.type === 'service_worker' && item.url === 'chrome-extension://' + id + '/lifecycle-worker.js');
+  assert.ok(worker, 'fixture service worker must be running');
+  await workerCdp.send('Target.closeTarget', { targetId: worker.targetId });
+  await workerCdp.detach();
+  await lifecycle.waitForFunction(() => lifecycleDisconnected, null, { timeout: 15000 });
+  const beforeTermination = observed.length;
+  assert.equal(await lifecycle.evaluate(async () => {
+    try { await fixtureOpenStaged(); return 'unexpected success'; } catch { return 'disconnected'; }
+  }), 'disconnected');
+  assert.equal(observed.length, beforeTermination, 'disconnected fixture must not create a handshake');
+  // Deliberate unsafe control: a script in the extension page can bypass the
+  // fixture gate while the old higher-priority session rule still exists.
+  assert.equal(await lifecycle.evaluate(url => new Promise(resolve => {
+    const socket = new WebSocket(url);
+    socket.onopen = () => socket.send('echo');
+    socket.onmessage = event => { socket.close(); resolve(event.data); };
+    socket.onerror = () => resolve('socket error');
+  }), url), 'echo');
+  assert.deepEqual(observed.slice(beforeTermination), ['workspace_session=alpha']);
+  await lifecycle.reload();
+  await lifecycle.evaluate(() => fixtureReady);
+  assert.deepEqual(await lifecycle.evaluate(() => chrome.declarativeNetRequest.getSessionRules()), []);
+  assert.deepEqual(await lifecycle.evaluate(() => Promise.all([fixtureOpen('workspace_session=alpha'), fixtureOpen('workspace_session=beta')])), ['echo', 'echo']);
+  assert.deepEqual(observed.slice(beforeTermination), ['workspace_session=alpha', 'workspace_session=alpha', 'workspace_session=beta']);
+  assert.deepEqual(await lifecycle.evaluate(() => chrome.declarativeNetRequest.getSessionRules()), []);
+
+  await lifecycle.evaluate(() => fixtureStage('workspace_session=alpha'));
+  await lifecycle.close();
+  await page.waitForFunction(async () => (await chrome.declarativeNetRequest.getSessionRules()).length === 0, null, { timeout: 15000 });
+
+  // In this Chrome build, --allow-insecure-localhost did not permit a worker
+  // WSS connection. This separate disposable profile uses the broad test-only
+  // certificate bypass; the fixture requests target only this local server.
+  const workerProbe = await openFixture('worker-profile', 'all', true);
+  const workerContext = workerProbe.context;
+  const workerPage = await workerContext.newPage();
+  const workerUrl = 'chrome-extension://' + id + '/worker-client.html?' + new URLSearchParams({ url });
+  await workerPage.goto(workerUrl);
+  await workerPage.evaluate(() => workerReady);
+  const beforeWorkerSocket = observed.length;
+  assert.equal(await workerPage.evaluate(url => new Promise(resolve => {
+    const socket = new WebSocket(url);
+    socket.onopen = () => { socket.close(); resolve('unexpected success'); };
+    socket.onerror = () => resolve('blocked');
+  }), url), 'blocked');
+  assert.equal(observed.length, beforeWorkerSocket, 'page CSP must block raw sockets');
+  try { assert.equal(await workerPage.evaluate(() => workerCall('open', 'workspace_session=alpha')), 'echo'); }
+  catch (error) { console.error('Worker handshake server observations:', JSON.stringify(observed.slice(beforeWorkerSocket))); throw error; }
+  const diagnosticWorker = workerContext.serviceWorkers().find(worker => worker.url().endsWith('/lifecycle-worker.js'));
+  console.log('Worker request metadata:', JSON.stringify(diagnosticWorker ? await diagnosticWorker.evaluate(() => globalThis.syntheticRequests) : 'unavailable'));
+  assert.deepEqual(observed.slice(beforeWorkerSocket), ['host_canary=synthetic-only'], 'unsafe control: worker sent host cookie despite the broad rule');
+  assert.deepEqual(await workerPage.evaluate(() => chrome.declarativeNetRequest.getSessionRules()), []);
+  await workerPage.close();
   console.log(JSON.stringify({ chrome: context.browser().version(), untrustedCertificateRejected: true,
     unprotectedSyntheticCookieObserved: true, staticBaselineRemovedCookie: true, emptyWorkspaceRemovedCookie: true,
     workspaceCookiesReachedServer: true, hostJarUnchanged: true, remainingRules: 0,
     normalHostTabUnaffected: true, staleSyntheticWorkspaceRuleSurvivedReload: true,
-    note: 'Loopback WSS only; a test-only localhost certificate exception was required.' }, null, 2));
+    gatedReloadClearedRule: true, workerTerminationRejectedOpening: true,
+    unsafeRawSocketBypassedGate: true, restartClearedRule: true, serializedWorkspaces: true, closeClearedRule: true,
+    pageSocketBlockedByCsp: true, unsafeWorkerSocketSentHostCookie: true,
+    note: 'Loopback WSS only; the page tests used a localhost certificate exception, and the separate worker test disabled certificate checks in its disposable profile.' }, null, 2));
 } finally {
   for (const context of contexts) await context.close().catch(() => {});
   if (sockets) await new Promise(resolve => sockets.close(resolve));

@@ -11,4 +11,4 @@ This build is a local preview. The following must be resolved before presenting 
 
 Do not use the experimental direct-network bridge or synthetic native-cache research components in a release. Their TLS/security state, general request handling, isolation and failure behavior are not ready for users.
 
-The local secure-WebSocket research also found that a cookie-bearing session rule can survive a reload and override a static host-cookie guard. A debugger-header alternative did not replace the host cookie in the tested Chrome version. See [the fixture findings](../extension-request-isolation/README.md); neither path is safe for production credentials.
+The local secure-WebSocket research also found that a cookie-bearing session rule can survive a reload and override a static host-cookie guard. A lifecycle broker cleans up in tested reload and worker-stop cases, but a raw socket in the extension page bypasses the broker. A worker-owned socket and a debugger-header alternative also sent the host cookie in the tested Chrome version. See [the fixture findings](../extension-request-isolation/README.md); none of these paths is safe for production credentials.
