@@ -12,7 +12,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(dir, '../..');
 const addon = await fs.mkdtemp(path.join(dir, 'temporary-addon-'));
 const profile = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
-const observed = [], httpObserved = [], networkRestoreRequests = [], networkRestoreAuthorization = [];
+const observed = [], httpObserved = [], privateObserved = [], networkRestoreRequests = [], networkRestoreAuthorization = [];
 let unexpectedRestoreRequests = 0;
 let server, sockets, context, context2, profile2;
 try {
@@ -24,6 +24,14 @@ try {
       networkRestoreAuthorization.push(request.headers.authorization || '');
       return response.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('network-restore');
     }
+    if (url.pathname === '/private/check') {
+      privateObserved.push({ label: url.searchParams.get('label'), cookie: request.headers.cookie || '' });
+      return response.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('private-check');
+    }
+    if (url.pathname === '/delete-fixture') {
+      return response.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store',
+        'Set-Cookie': 'preference=deleted; Max-Age=0; Secure; SameSite=None; Path=/' }).end('deleted');
+    }
     if (url.pathname !== '/http') return response.writeHead(404).end();
     httpObserved.push({ label: url.searchParams.get('label'), cookie: request.headers.cookie || '', origin: request.headers.origin || '' });
     const headers = { 'Access-Control-Allow-Origin': request.headers.origin || '*',
@@ -31,6 +39,8 @@ try {
     if (['a-http-set', 'a-debug-set'].includes(url.searchParams.get('label'))) headers['Set-Cookie'] = [
       'preference=alpha; Secure; SameSite=None; Path=/',
       'http_token=synthetic; HttpOnly; Secure; SameSite=None; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/',
+      'path_scope=synthetic; HttpOnly; Secure; SameSite=None; Path=/private',
+      'temporary=synthetic; HttpOnly; Secure; SameSite=None; Max-Age=2; Path=/',
       'rejected_synthetic=bad; Domain=example.invalid; Secure; SameSite=None; Path=/'
     ];
     response.writeHead(200, headers).end('synthetic');
@@ -114,6 +124,7 @@ try {
   await fetchProbe(isolated, 'a-http');
   await fetchProbe(second, 'b-http');
   await fetchProbe(isolated, 'a-http-set');
+  const shortCookieObservedAt = Date.now();
   assert.deepEqual(httpObserved.map(({ label, cookie }) => [label, cookie]), [
     ['normal-http', 'host_canary=synthetic-only'], ['a-http', 'workspace_session=alpha'], ['b-http', 'workspace_session=beta'],
     ['a-http-set', 'workspace_session=alpha']
@@ -128,9 +139,12 @@ try {
   }
   const httpSetEvent = responseEvents.find(event => event.url.includes('label=a-http-set'));
   assert.deepEqual([httpSetEvent.tabId, httpSetEvent.frameId], [frameIds[1].tabId, frameIds[1].frameId]);
-  assert.equal(httpSetEvent.headers.length, 3);
+  assert.equal(httpSetEvent.headers.length, 5);
   assert.ok(httpSetEvent.headers.some(header => header.value.includes('Wed, 21 Oct 2037')));
   assert.ok(httpSetEvent.headers.some(header => header.value.startsWith('rejected_synthetic=')));
+  const privateUrl = 'http://localhost:' + server.address().port + '/private/check?label=source';
+  assert.equal(await isolated.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), privateUrl), 'private-check');
+  assert.match(privateObserved[0].cookie, /(?:^|;\s*)path_scope=synthetic(?:;|$)/);
   const cookieApi = await page.evaluate(async () => (await chrome.cookies.getAll({ domain: 'localhost' })).map(cookie => ({
     name: cookie.name, value: cookie.value, partitionKey: cookie.partitionKey || null
   })));
@@ -281,15 +295,18 @@ try {
   await open(networkFrame, 'network-after');
   await open(normalAfterRestore, 'normal-after-network');
   await open(second, 'b-after-a-reload');
-  // Minimal synthetic portability probe: one already-observed fixed cookie,
-  // encrypted with the existing OUTPOST envelope. This is not a cookie jar.
-  const exportBytes = await page.evaluate(async cookie => {
+  // Fixture-only allowlist: these particular synthetic headers were accepted in
+  // the local control. This does not implement general cookie acceptance.
+  const syntheticCookies = [syntheticCookie, ...httpSetEvent.headers.map(header => header.value)
+    .filter(value => value.startsWith('preference=alpha;') || value.startsWith('http_token=synthetic;') || value.startsWith('path_scope=synthetic;'))];
+  assert.equal(syntheticCookies.length, 4);
+  const exportBytes = await page.evaluate(async cookies => {
     const { seal } = await import(chrome.runtime.getURL('portable.js'));
-    const payload = new TextEncoder().encode(JSON.stringify({ format: 'synthetic-v1', cookie }));
+    const payload = new TextEncoder().encode(JSON.stringify({ format: 'synthetic-v1', cookies }));
     const blob = await seal(payload, 'synthetic-test-passphrase!', '0'.repeat(64));
     payload.fill(0);
     return [...new Uint8Array(await blob.arrayBuffer())];
-  }, syntheticCookie);
+  }, syntheticCookies);
   assert.equal(Buffer.from(exportBytes).includes(Buffer.from('workspace_session=alpha')), false);
   profile2 = await fs.mkdtemp(path.join(dir, 'temporary-profile-'));
   context2 = await chromium.launchPersistentContext(profile2, {
@@ -318,17 +335,22 @@ try {
   assert.deepEqual(await decrypt(tampered, 'synthetic-test-passphrase!'), { error: 'rejected' });
   assert.equal(networkRestoreRequests.length, restoreRequestCount, 'invalid exports must not trigger restore traffic');
   const decrypted = await decrypt(exportBytes, 'synthetic-test-passphrase!');
-  assert.deepEqual(decrypted, { value: { format: 'synthetic-v1', cookie: syntheticCookie } });
+  assert.deepEqual(decrypted, { value: { format: 'synthetic-v1', cookies: syntheticCookies } });
   const deviceUrl = 'http://localhost:' + server.address().port + '/restore-network?' + new URLSearchParams({ token: crypto.randomUUID() });
-  const deviceRule = await devicePage.evaluate(async ({ url, cookie }) => {
-    if (cookie !== 'workspace_session=alpha; HttpOnly; Secure; SameSite=None; Path=/') throw Error('Synthetic cookie required');
+  const deviceRule = await devicePage.evaluate(async ({ url, cookies }) => {
+    if (JSON.stringify(cookies) !== JSON.stringify([
+      'workspace_session=alpha; HttpOnly; Secure; SameSite=None; Path=/',
+      'preference=alpha; Secure; SameSite=None; Path=/',
+      'http_token=synthetic; HttpOnly; Secure; SameSite=None; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/',
+      'path_scope=synthetic; HttpOnly; Secure; SameSite=None; Path=/private'
+    ])) throw Error('Synthetic cookies required');
     const tabId = (await chrome.tabs.getCurrent()).id, escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId], addRules: [{ id: tabId, priority: 2,
       action: { type: 'modifyHeaders', requestHeaders: [{ header: 'Cookie', operation: 'remove' }, { header: 'Authorization', operation: 'remove' }],
-        responseHeaders: [{ header: 'Set-Cookie', operation: 'append', value: cookie }] },
+        responseHeaders: cookies.map(value => ({ header: 'Set-Cookie', operation: 'append', value })) },
       condition: { regexFilter: '^' + escaped + '$', initiatorDomains: [chrome.runtime.id], tabIds: [tabId], resourceTypes: ['xmlhttprequest'] } }] });
     return tabId;
-  }, { url: deviceUrl, cookie: decrypted.value.cookie });
+  }, { url: deviceUrl, cookies: decrypted.value.cookies });
   try {
     assert.equal(await deviceFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), deviceUrl), 'network-restore');
   } finally { await devicePage.evaluate(ruleId => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }), deviceRule); }
@@ -336,6 +358,51 @@ try {
   assert.deepEqual(networkRestoreAuthorization.slice(restoreRequestCount), ['']);
   await open(deviceFrame, 'device-restored');
   await open(deviceNormal, 'device-host-after');
+  const devicePrivateUrl = 'http://localhost:' + server.address().port + '/private/check?label=restored';
+  assert.equal(await deviceFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), devicePrivateUrl), 'private-check');
+  assert.match(privateObserved[1].cookie, /(?:^|;\s*)path_scope=synthetic(?:;|$)/);
+  const deletionUrl = 'http://localhost:' + server.address().port + '/delete-fixture';
+  assert.equal(await deviceFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), deletionUrl), 'deleted');
+  await open(deviceFrame, 'device-after-delete');
+  // Unsafe control: deliberately retain a synthetic restore rule across a
+  // top-level reload, then repeat its exact local URL from the new frame.
+  const staleRule = await devicePage.evaluate(async url => {
+    const tabId = (await chrome.tabs.getCurrent()).id, escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId], addRules: [{ id: tabId, priority: 2,
+      action: { type: 'modifyHeaders', requestHeaders: [{ header: 'Cookie', operation: 'remove' }],
+        responseHeaders: [{ header: 'Set-Cookie', operation: 'append', value: 'workspace_session=stale; HttpOnly; Secure; SameSite=None; Path=/' }] },
+      condition: { regexFilter: '^' + escaped + '$', initiatorDomains: [chrome.runtime.id], tabIds: [tabId], resourceTypes: ['xmlhttprequest'] } }] });
+    return tabId;
+  }, deviceUrl);
+  try {
+    await devicePage.reload();
+    assert.ok((await devicePage.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).some(rule => rule.id === staleRule));
+    const newDeviceFrame = await frame(devicePage, true);
+    await open(newDeviceFrame, 'device-new-before-stale');
+    assert.equal(await newDeviceFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), deviceUrl), 'network-restore');
+    await open(newDeviceFrame, 'device-after-stale-rule');
+  } finally { await devicePage.evaluate(ruleId => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }), staleRule); }
+  // Unsafe control: replaying an old Max-Age header resets its lifetime.
+  // The fixed test cookie is deliberately omitted from the encrypted export.
+  const shortCookie = httpSetEvent.headers.find(header => header.value.startsWith('temporary=synthetic;')).value;
+  const expiryPage = await context2.newPage();
+  await expiryPage.goto('chrome-extension://' + id + '/empty.html');
+  const expiryFrame = await frame(expiryPage, true);
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, shortCookieObservedAt + 2500 - Date.now())));
+  await open(expiryFrame, 'expiry-before');
+  const expiryUrl = 'http://localhost:' + server.address().port + '/restore-network?' + new URLSearchParams({ token: crypto.randomUUID() });
+  const expiryRule = await expiryPage.evaluate(async ({ url, cookie }) => {
+    const tabId = (await chrome.tabs.getCurrent()).id, escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId], addRules: [{ id: tabId, priority: 2,
+      action: { type: 'modifyHeaders', requestHeaders: [{ header: 'Cookie', operation: 'remove' }],
+        responseHeaders: [{ header: 'Set-Cookie', operation: 'append', value: cookie }] },
+      condition: { regexFilter: '^' + escaped + '$', initiatorDomains: [chrome.runtime.id], tabIds: [tabId], resourceTypes: ['xmlhttprequest'] } }] });
+    return tabId;
+  }, { url: expiryUrl, cookie: shortCookie });
+  try {
+    assert.equal(await expiryFrame.evaluate(async url => (await fetch(url, { credentials: 'include', cache: 'no-store' })).text(), expiryUrl), 'network-restore');
+  } finally { await expiryPage.evaluate(ruleId => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }), expiryRule); }
+  await open(expiryFrame, 'expiry-after-raw-replay');
   const expected = [
     ['normal-before', 'host_canary=synthetic-only'], ['a-seed', ''], ['a-follow', 'workspace_session=alpha'],
     ['a-sibling', 'workspace_session=alpha'], ['b-before', ''], ['b-seed', ''], ['b-follow', 'workspace_session=beta'],
@@ -343,7 +410,10 @@ try {
     ['a-after-reload', ''], ['a-after-restore', ''], ['normal-after-restore', 'host_canary=synthetic-only; workspace_session=alpha'],
     ['network-before', ''], ['network-after', 'workspace_session=delta'],
     ['normal-after-network', 'host_canary=synthetic-only; workspace_session=alpha'], ['b-after-a-reload', 'workspace_session=beta'],
-    ['device-restored', 'workspace_session=alpha'], ['device-host-after', 'host_canary=other-device']
+    ['device-restored', 'workspace_session=alpha; preference=alpha; http_token=synthetic'], ['device-host-after', 'host_canary=other-device'],
+    ['device-after-delete', 'workspace_session=alpha; http_token=synthetic'],
+    ['device-new-before-stale', ''], ['device-after-stale-rule', 'workspace_session=stale'],
+    ['expiry-before', ''], ['expiry-after-raw-replay', 'temporary=synthetic']
   ];
   assert.deepEqual(states, [false, true]);
   assert.deepEqual(observed.map(({ label, cookie }) => [label, cookie]), expected);
@@ -357,7 +427,9 @@ try {
     unsafeInterceptedRestorePollutedHostJar: true, interceptedRestoreDidNotRestoreWorkspace: true,
     networkHeaderRestoreWroteWorkspaceCookie: true, unsafeNetworkRestoreSentWorkspaceCookie: true,
     scopedHeaderRemovalPreventedSyntheticCookieAndAuthorization: true, credentiallessPartitionKeysNotSerializable: true,
-    syntheticEncryptedCookieTransferredToFreshProfile: true, wrongPasswordAndTamperingRejected: true,
+    fourSyntheticEncryptedCookiesTransferredToFreshProfile: true, restoredPathScopeAndDeletionChecked: true, wrongPasswordAndTamperingRejected: true,
+    unsafeStaleRestoreRuleCrossedReload: true,
+    unsafeRawMaxAgeReplayRevivedExpiredCookie: true,
     debuggerListMixedHostAndWorkspaces: true, debuggerListDidNotIdentifyTheirPartitions: true,
     frameDebuggerSession: frameCdpCookies.error || 'available',
     note: 'Local synthetic evidence only; a positive result would not establish Gecko integration or production safety.' }, null, 2));

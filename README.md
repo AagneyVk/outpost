@@ -16,7 +16,7 @@ OUTPOST runs a WebAssembly build of Gecko in a browser tab. You can browse in a 
 
 An [experimental extension bridge](experiments/extension-bridge/README.md) tests a possible alternative network path with restricted local and HTTPS fixtures. It is research code and does not yet replace the relay or browse arbitrary websites.
 
-A separate [unpacked Chrome extension preview](experiments/extension-shell/README.md) packages the existing browser UI and still uses the selected Wisp relay. Its storage is separate from the web demo, and it does not include the Linux workspace. It is not a production release.
+A separate [unpacked Chrome extension preview](experiments/extension-shell/README.md) packages the existing browser UI and still uses the selected Wisp relay. Its storage is separate from the web demo. An optional larger build includes an offline Linux terminal and files. It is not a production release.
 
 | Feature | GitHub Pages | Local checkout |
 | --- | --- | --- |
