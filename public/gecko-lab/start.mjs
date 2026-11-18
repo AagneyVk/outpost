@@ -111,8 +111,8 @@ function saveTabs() {
     active: tabs.indexOf(activeTab),
     zoom,
   };
-  sessionWrite = sessionWrite.then(() => writeBrowserSession(session)).catch(error => {
-    console.error('OUTPOST could not save tabs', error);
+  sessionWrite = sessionWrite.then(() => writeBrowserSession(session)).catch(() => {
+    console.error('OUTPOST could not save tabs.');
   });
 }
 
@@ -354,8 +354,8 @@ document.querySelector('#fullscreen').addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await document.documentElement.requestFullscreen();
-  } catch (error) {
-    console.error(error);
+  } catch {
+    console.error('OUTPOST could not change full screen.');
   }
 });
 
@@ -371,7 +371,6 @@ function finishNavigation(message) {
 }
 
 function reportEngineMessage(message) {
-  console.debug(message);
   const result = /^xul_render: load (stop|FAILED) status=(0x[0-9a-f]+).*? req=(https?:\/\/\S+)/i.exec(message);
   if (!result) return;
   if (!navigation) {
@@ -437,7 +436,7 @@ document.querySelector('#navigation').addEventListener('submit', event => {
     if (/^https?:\/\//i.test(value)) {
       url = new URL(value);
     } else if (/^(?:localhost|\[[a-f\d:]+\]|[\w-]+(?:\.[\w-]+)+)(?::\d+)?(?:[/?#]\S*)?$/i.test(value)) {
-      url = new URL((value.toLowerCase() === 'example.com' ? 'http://' : 'https://') + value);
+      url = new URL('https://' + value);
     } else {
       url = new URL('https://www.google.com/search');
       url.searchParams.set('q', value);
@@ -469,8 +468,8 @@ async function navigate(url, targetPosition) {
     zoomDocumentReady = true;
     if (nativeZoom) await resizeSurface();
     canvas.focus();
-  } catch (error) {
-    console.error(error);
+  } catch {
+    console.error('OUTPOST could not open the page.');
     if (navigation?.url === url) finishNavigation('Could not open ' + url.hostname);
   }
 }
@@ -527,9 +526,9 @@ start.addEventListener('click', async () => {
         throw Error('Could not restore session logins. Your saved profile has not been removed.');
       await clearSessionCookieSnapshot();
     }
-    await restoreTabs().catch(error => console.warn('Could not restore tabs', error));
-    const savedHistory = await readBrowserHistory().catch(error => {
-      console.warn('Could not read history', error);
+    await restoreTabs().catch(() => console.warn('Could not restore tabs.'));
+    const savedHistory = await readBrowserHistory().catch(() => {
+      console.warn('Could not read history.');
       return [];
     });
     for (const value of savedHistory) {
@@ -574,7 +573,7 @@ start.addEventListener('click', async () => {
       }
     };
     await resizeSurface();
-    const resize = () => resizeSurface().catch(console.error);
+    const resize = () => resizeSurface().catch(() => console.error('OUTPOST could not resize the browser.'));
     new ResizeObserver(resize).observe(viewport);
     window.addEventListener('resize', resize);
     status.textContent = 'Search Google or enter an address.';
@@ -589,7 +588,7 @@ start.addEventListener('click', async () => {
     if (position >= 0) navigate(stack[position], position);
     else address.focus();
   } catch (error) {
-    console.error(error);
+    console.error('OUTPOST could not start the browser.');
     if (gecko) {
       gecko.destroy();
       start.textContent = 'Reload OUTPOST';

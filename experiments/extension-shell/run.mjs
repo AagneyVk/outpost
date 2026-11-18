@@ -55,9 +55,12 @@ try {
     });
   });
   const page = await context.newPage();
-  const pageErrors = [], diagnostics = [];
+  const pageErrors = [], diagnostics = [], sensitiveConsoleEntries = [];
   page.on('pageerror', error => pageErrors.push(String(error)));
-  page.on('console', message => { if (message.type() === 'error') diagnostics.push(message.text().slice(0, 500)); });
+  page.on('console', message => {
+    if (message.type() === 'error') diagnostics.push(message.text().slice(0, 500));
+    if (message.text().includes('synthetic-private-query-marker')) sensitiveConsoleEntries.push(message.type());
+  });
   page.on('requestfailed', request => diagnostics.push(request.url() + ': ' + (request.failure()?.errorText || 'failed')));
   await page.goto('chrome-extension://' + id + '/gecko-lab/index.html');
   assert.equal(await page.evaluate(() => crossOriginIsolated), true);
@@ -69,10 +72,10 @@ try {
   await page.locator('#start').click();
   await page.waitForFunction(() => !document.querySelector('#address').disabled || !document.querySelector('#start-error').hidden, null, { timeout: 180000 });
   assert.equal(await page.locator('#start-error').isHidden(), true, JSON.stringify({ message: await page.locator('#start-error').textContent(), diagnostics }));
-  await page.locator('#address').fill('http://extension-fixture.test/');
+  await page.locator('#address').fill('http://extension-fixture.test/?synthetic-private-query-marker');
   await page.locator('#address').press('Enter');
   await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Loaded extension-fixture.test'), null, { timeout: 60000 });
-  assert.ok(relayRequests.some(request => /^GET \/ HTTP\/1\.[01]/.test(request)), 'Gecko must send its request through the mocked relay');
+  assert.ok(relayRequests.some(request => /^GET \/\?synthetic-private-query-marker HTTP\/1\.[01]/.test(request)), 'Gecko must send its request through the mocked relay');
   assert.ok(relayRequests.every(request => !/host_canary/i.test(request)), 'host-browser cookie must not enter guest requests');
   await page.locator('#new-tab').click();
   assert.equal(await page.locator('#tabs .browser-tab').count(), 2);
@@ -98,9 +101,10 @@ try {
     catch { return 'rejected'; }
   }, id), 'rejected');
   assert.deepEqual(pageErrors, []);
+  assert.deepEqual(sensitiveConsoleEntries, [], 'navigation query values must not appear in browser console output');
   assert.deepEqual((await context.cookies('http://extension-fixture.test')).map(cookie => cookie.name), ['host_canary']);
   console.log(JSON.stringify({ chrome: context.browser().version(), extensionStarted: true, relayNavigation: true,
-    tabs: true, history: true, fileRoundTrip: true, hostCookieIsolated: true, externalReadRejected: true }, null, 2));
+    tabs: true, history: true, fileRoundTrip: true, hostCookieIsolated: true, externalReadRejected: true, navigationQueryNotLogged: true }, null, 2));
 } finally {
   if (context) await context.close();
   if (attackerServer) await new Promise(resolve => attackerServer.close(resolve));

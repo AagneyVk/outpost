@@ -4,7 +4,7 @@ export const profileLock = 'outpost-gecko-profile';
 const defaultProfile = 'outpost-gecko-lab';
 const profileKey = 'outpost-gecko-profile-name';
 const limit = 64 * 1024 * 1024;
-const passphrasePolicy = { minLength: 8 };
+const passphrasePolicy = { minLength: 8, maxOutputBytes: limit + 1024 * 1024 };
 const fingerprint = 'ebd6c75179152624d9644865e11792ed25cadc714d9e0985f412baf9c637a086';
 
 export function profileName() {

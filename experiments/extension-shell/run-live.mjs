@@ -36,7 +36,7 @@ try {
   await page.locator('#start').click();
   await page.waitForFunction(() => !document.querySelector('#address').disabled || !document.querySelector('#start-error').hidden, null, { timeout: 180000 });
   assert.equal(await page.locator('#start-error').isHidden(), true, await page.locator('#start-error').textContent());
-  await page.locator('#address').fill('https://example.com/');
+  await page.locator('#address').fill('example.com');
   await page.locator('#address').press('Enter');
   await page.waitForFunction(async () => {
     try { return await window.__outpostTestGecko.evalChrome("String(document.body?.textContent?.includes('documentation examples') || false)") === 'true'; }

@@ -13,3 +13,9 @@ test('format and expensive KDF parameters are bounded before processing',async()
  await assert.rejects(seal(new Uint8Array([1]),'short',runtime),/passphrase/);
  await assert.rejects(unseal(new Blob(['bad']),pass,runtime),/Invalid/);
 });
+test('caller output limit rejects oversized decompression without affecting valid exports',async()=>{
+ const raw=new Uint8Array(2048).fill(65),blob=await seal(raw,pass,runtime);
+ assert.deepEqual(await unseal(blob,pass,runtime,{maxOutputBytes:raw.length}),raw);
+ await assert.rejects(unseal(blob,pass,runtime,{maxOutputBytes:raw.length-1}),/size limit/);
+ for(const bad of [-1,1.5,NaN,Infinity,Number.MAX_SAFE_INTEGER])await assert.rejects(unseal(blob,pass,runtime,{maxOutputBytes:bad}),/output limit/);
+});

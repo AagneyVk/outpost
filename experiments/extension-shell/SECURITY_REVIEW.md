@@ -1,0 +1,32 @@
+# Extension preview security review
+
+This is an internal source and test review of the relay-based unpacked preview, not an independent audit or a production certification. Tests use disposable Chrome profiles and synthetic data. It does not establish the absence of vulnerabilities in the browser engine, emulator, web pages, host computer or third-party relay.
+
+## Findings and release status
+
+1. **Direct networking is not safe to ship.** The separate experiments have reproduced host/workspace cookie confusion, stale rules and loss of credentialless cookies on reload. Their narrow guards and expiry helper are not integrated into the user-facing extension and do not establish a complete cookie jar, TLS state, request isolation or failure recovery. See [the transport findings](../extension-request-isolation/README.md).
+2. **The working profile is not encrypted by OUTPOST on the device.** Gecko's session snapshot writes base64-encoded cookie fields to its profile; base64 is not encryption. The export uses an authenticated encrypted envelope, but its passphrase does not encrypt the live profile or local snapshot. OS or browser disk protections depend on the host. The user interface now states this distinction. The clear-profile operation removes OUTPOST Gecko profiles, not the separate Browser Files or Linux workspace, and deletion is not proof of forensic erasure. A hostile borrowed computer can observe input and plaintext.
+3. **Export passphrases are restricted to exactly eight characters.** The user's requested policy requires a number and symbol but cannot guarantee entropy. An attacker who obtains an export can try passwords offline despite the 600,000-round PBKDF2 cost. A production security claim requires a stronger passphrase/recovery design and migration plan agreed with the user.
+4. **The default Wisp relay is an external public demo.** It can observe destination metadata and plaintext HTTP traffic, and OUTPOST does not control its uptime or abuse handling. HTTPS is handled by Gecko; the live smoke test has verified three invalid-certificate cases, not every TLS or interception scenario. See [release gates](RELEASE.md).
+5. **Binary provenance, update handling and distribution rights remain incomplete.** The Gecko and optional Linux assets require reproducible source/build verification, exact dependency inventories, applicable notices and an update process. The local Linux checksum checks are not a provenance proof. Chrome Web Store policy and review are also unresolved.
+6. **Browser and extension isolation need independent review.** The manifest requests no broad host, debugger or tabs permissions, and a synthetic test found a normal web page could not fetch a non-web-accessible extension page. Those checks do not establish that hostile guest content cannot access extension resources or escape its sandbox.
+7. **Real-site sign-in compatibility is not established.** In a second public-demo run, the protected page did not remain visible after sign-in and the guest returned to the login page. The cause has not been established; it could involve the site, relay, engine or test. The extension needs repeatable investigation and broader sign-in coverage before release.
+
+## Changes from this review
+
+- Typed domains, including `example.com`, now default to HTTPS. Explicit HTTP remains supported when the user supplies it.
+- Browser-profile import now applies its own decompression limit while reading, rather than first expanding up to the larger Linux-workspace limit. This reduces one memory-exhaustion exposure; it does not remove all denial-of-service risks.
+- The profile UI explains that the active local copy is not encrypted by OUTPOST and that its file stores are separate.
+- The host UI no longer writes raw Gecko messages or caught errors to the browser console. Those messages could contain full requested URLs. A synthetic navigation test checks that one private query marker is not logged; it is not a proof that all third-party or browser logging is eliminated.
+
+## Testing boundaries
+
+The extension harness checks manifest permissions, ordinary-page resource access, synthetic browser navigation and profile transfer. The live HTTPS harness uses the existing public relay and checks `example.com` and selected invalid-certificate hosts. A separate real-site sign-in harness uses only the practice site's published synthetic credentials. Results depend on the public relay and site availability; report the actual run outcome rather than assuming a pass. No real user credentials or external security audit are included.
+
+On 2026-11-19, `npm audit` reported zero known advisories for the npm dependency tree, including development dependencies. The check used Node's system certificate authorities. This does not cover the bundled Gecko engine, Linux image, browser, relay, or unknown vulnerabilities. The extension import-limit regression test also rejected an authenticated synthetic 66 MiB decompression payload and verified that an existing synthetic profile was preserved.
+
+On 2026-11-19, a run against The Internet's public practice site signed in using its published synthetic credentials through Gecko and the public Wisp relay, exported the encrypted browser profile, restored it in a fresh Chrome profile, reached the protected page, and confirmed that logout rejected a subsequent request to that page. A separate native Chrome control passed the same login/logout check. The test needed to allow redirects to settle; an earlier version gave misleading results by checking the previous document while navigation was in flight. These results cover one demo flow, not the experimental direct transport or general website compatibility.
+
+On the same date two Expand Testing runs did not pass the stable protected-page check: the guest was back on `/login` when checked 1.5 seconds after the success condition. The native Chrome control completed its login and logout. The underlying cause remains unverified and the OUTPOST tests must not be counted as successful sign-ins.
+
+Chrome's [extension security guidance](https://developer.chrome.com/docs/extensions/develop/security-privacy/stay-secure) and [Manifest V3 policy](https://developer.chrome.com/docs/webstore/program-policies/mv3-requirements) should be considered in a later independent review. The preview must not be represented as a production-ready direct-network extension.

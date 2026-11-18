@@ -21,7 +21,8 @@ export async function seal(raw,pass,runtime,{minLength=16}={}){
  const length=new Uint8Array(4);new DataView(length.buffer).setUint32(0,header.length);
  return new Blob([magic,length,header,cipher],{type:'application/octet-stream'});
 }
-export async function unseal(blob,pass,runtime,{minLength=16}={}){
+export async function unseal(blob,pass,runtime,{minLength=16,maxOutputBytes=maxRaw}={}){
+ if(!Number.isSafeInteger(maxOutputBytes)||maxOutputBytes<0||maxOutputBytes>maxRaw)throw Error('Invalid workspace output limit.');
  if(blob.size>maxEncrypted||blob.size<magic.length+4+16)throw Error('Invalid or oversized workspace export.');
  const all=new Uint8Array(await blob.arrayBuffer());
  if(!magic.every((v,i)=>v===all[i]))throw Error('Not an OUTPOST local export.');
@@ -31,5 +32,5 @@ export async function unseal(blob,pass,runtime,{minLength=16}={}){
  if(h.version!==1||h.kdf!=='PBKDF2-SHA256'||h.rounds!==rounds||h.compression!=='gzip'||salt.length!==16||iv.length!==12)throw Error('Unsupported export format.');
  if(h.runtime!==runtime)throw Error('This export needs the same OUTPOST runtime build. Keep its original runtime assets.');
  let compressed;try{compressed=await crypto.subtle.decrypt({name:'AES-GCM',iv,additionalData:header,tagLength:128},await key(pass,salt,minLength),all.subarray(magic.length+4+n));}catch{throw Error('Wrong passphrase or damaged workspace. Existing work was not changed.');}
- try{return await collect(new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip')),maxRaw);}finally{new Uint8Array(compressed).fill(0);}
+ try{return await collect(new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip')),maxOutputBytes);}finally{new Uint8Array(compressed).fill(0);}
 }
