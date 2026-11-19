@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
+import { waitForAsync } from '../wait-for-async.mjs';
 
 const base = process.argv[2] ?? 'http://127.0.0.1:3001/';
 const customRelay = process.argv[3];
@@ -112,21 +113,26 @@ try {
   await page.getByRole('textbox', { name: 'Address' }).press('Enter');
   await page.getByText('Loaded outpost-fixture.test', { exact: true }).waitFor({ state: 'attached' });
   for (let i = 0; i < 5; i++) await page.locator('#zoom-in').click();
-  await page.waitForFunction(async sessionTest => {
+  await waitForAsync(() => page.evaluate(async sessionTest => {
     const entry = document.querySelector('script[type="module"][src$="/start.mjs"]');
     const { readBrowserSession } = await import(new URL('./profile.mjs', entry.src).href);
     const session = await readBrowserSession();
     return session?.active === 1 && session.tabs[1].position === (sessionTest ? 1 : 0) && session.zoom === 150;
-  }, testSession);
+  }, testSession));
   // Allow the persistent cookie write to reach OPFS before closing the engine tab.
-  await page.waitForFunction(async () => {
-    const root = await navigator.storage.getDirectory();
-    const dir = await root.getDirectoryHandle('outpost-gecko-lab');
-    for await (const [name, handle] of dir.entries()) {
-      if (name.startsWith('cookies.sqlite') && (await handle.getFile()).size > 0) return true;
+  await waitForAsync(() => page.evaluate(async () => {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle('outpost-gecko-lab');
+      for await (const [name, handle] of dir.entries()) {
+        if (name.startsWith('cookies.sqlite') && (await handle.getFile()).size > 0) return true;
+      }
+      return false;
+    } catch (error) {
+      if (error.name === 'NotFoundError') return false;
+      throw error;
     }
-    return false;
-  });
+  }));
   if (testSession) {
     await page.locator('#exit-browser').click();
     await page.getByText('Browser closed. Enter a passphrase and export your saved profile.').waitFor({ timeout: 30000 });

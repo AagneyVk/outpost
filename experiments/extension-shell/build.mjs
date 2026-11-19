@@ -17,7 +17,7 @@ if (linux && (destination === linux.dir || destination.startsWith(linux.dir + pa
 const publicRoot = path.join(root, 'public');
 const files = [
   'workstation.css', 'tools.css', 'portable.js', 'theme/pixelify.ttf', 'theme/vt323.ttf', 'theme/OFL.txt', 'theme/VT323-OFL.txt',
-  'gecko-lab/index.html', 'gecko-lab/browser.css', 'gecko-lab/start.mjs', 'gecko-lab/profile.mjs',
+  'gecko-lab/index.html', 'gecko-lab/browser.css', 'gecko-lab/start.mjs', 'gecko-lab/profile.mjs', 'gecko-lab/passphrase-policy.mjs',
   'gecko-lab/drag-capture.mjs', 'gecko-lab/wheel-queue.mjs', 'gecko-lab/engine-watchdog.mjs', 'gecko-lab/certificate-errors.mjs',
   'gecko-lab/files.html', 'gecko-lab/files.mjs', 'gecko-lab/return-to-browser.mjs',
   'gecko-lab/engine/gecko-input-v7.wasm.zst', 'gecko-lab/engine/LICENSE'

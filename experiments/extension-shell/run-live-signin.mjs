@@ -5,13 +5,14 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { waitForAsync } from '../../tools/wait-for-async.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), root = path.resolve(here, '../..');
 const flag = process.argv.indexOf('--addon');
 if (flag >= 0 && !process.argv[flag + 1]) throw Error('--addon requires a directory path');
 const addon = path.resolve(flag >= 0 ? process.argv[flag + 1] : path.join(root, '../outpost-extension-security-preview'));
 const profiles = [], contexts = [];
-const passphrase = 'T3st!abc';
+const passphrase = 'Synthetic longer test passphrase';
 const siteFlag = process.argv.indexOf('--site');
 const site = siteFlag < 0 ? 'expand' : process.argv[siteFlag + 1];
 const fixtures = { expand: { host: 'practice.expandtesting.com', username: 'practice' },
@@ -95,19 +96,24 @@ try {
     await page.evaluate(() => globalThis.__outpostNavObserver.disconnect());
   }
   async function waitGuest(page, expression, timeout = 90000) {
-    await page.waitForFunction(async expression => {
-      try { return await window.__outpostTestGecko.evalChrome(expression) === 'true'; } catch { return false; }
-    }, expression, { timeout, polling: 1000 });
+    // waitForFunction treats the returned Promise itself as truthy. Poll the
+    // resolved Gecko result here, outside the page, so false cannot pass.
+    await waitForAsync(async () => {
+      try { return await guest(page, expression) === 'true'; } catch { return false; }
+    }, { timeout, interval: 500 });
   }
   async function clickGuest(page, selector) {
     if (await page.locator('#scene-view').isVisible()) await page.locator('#scene-view').click();
-    const expression = `JSON.stringify((()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,w:innerWidth,h:innerHeight};})())`;
+    const expression = `JSON.stringify((()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);return {x,y,w:innerWidth,h:innerHeight,hit:hit?.tagName,hitMatches:!!hit&&(hit===e||e.contains(hit))};})())`;
     let point = null;
-    for (let attempt = 0; attempt < 40 && !point; attempt++) {
+    for (let attempt = 0; attempt < 80; attempt++) {
       try { point = JSON.parse(await guest(page, expression)); } catch {}
-      if (!point) await page.waitForTimeout(500);
+      if (point?.hitMatches && point.x >= 0 && point.y >= 0 && point.x < point.w && point.y < point.h) break;
+      point = null;
+      await page.waitForTimeout(250);
     }
-    assert.ok(point && point.w > 0 && point.h > 0, 'demo element missing: ' + selector);
+    assert.ok(point && point.w > 0 && point.h > 0, 'demo element is not clickable: ' + selector);
+    if (process.argv.includes('--trace')) console.log('Synthetic click:', selector, JSON.stringify(point));
     const box = await page.locator('#surface').boundingBox();
     assert.ok(box);
     await page.mouse.click(box.x + point.x * box.width / point.w, box.y + point.y * box.height / point.h);
@@ -128,8 +134,19 @@ try {
     await first.page.keyboard.type('SuperSecretPassword!');
     await waitGuest(first.page, "String(document.querySelector('#password')?.value.length===20)", 20000);
     await clickGuest(first.page, 'button[type="submit"]');
+    if (process.argv.includes('--trace')) {
+      let previous = '';
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const state = await guest(first.page, `JSON.stringify({path:location.pathname,ready:document.readyState,success:/you logged into a secure area/i.test(document.body?.textContent||''),logout:!!document.querySelector('a[href*="/logout"]'),login:!!document.querySelector('#username'),invalid:/invalid (username|password)/i.test(document.querySelector('#flash')?.textContent||''),cookies:document.cookie.split(';').map(x=>x.trim().split('=')[0]).filter(Boolean).sort()})`);
+        if (state !== previous) console.log('Synthetic demo state:', state);
+        previous = state;
+        await first.page.waitForTimeout(500);
+      }
+    }
     stage = 'waiting for confirmed demo sign-in';
+    if (process.argv.includes('--trace')) console.log('Synthetic signed-in predicate before wait:', await guest(first.page, signedIn));
     await waitGuest(first.page, signedIn, 90000);
+    if (process.argv.includes('--trace')) console.log('Synthetic signed-in predicate after wait:', await guest(first.page, signedIn));
     await first.page.waitForTimeout(1500);
     assert.equal(await guest(first.page, signedIn), 'true', 'demo sign-in must remain on the protected page');
     console.log('Confirmed protected demo page in first profile.');

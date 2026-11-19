@@ -4,6 +4,8 @@ This packages the existing OUTPOST Gecko browser UI as an unpacked Manifest V3 e
 
 The extension asks for no broad host permissions, `debugger`, or access to existing browser tabs. Its packaged Gecko engine and decompressor run under the extension's content-security policy. The browser's guest pages and guest cookies still require a security review; this is not a claim of protection against a malicious host computer, compromised extension code, or browser vulnerabilities. The relay can observe destination metadata and unencrypted HTTP traffic. HTTPS is handled by the bundled Gecko engine over the relay.
 
+Browser profile exports accept either the existing eight-character format or a longer passphrase of 16 or more characters. A longer, unique passphrase is recommended: short passphrases are vulnerable to offline guessing if an export is obtained. The live browser profile is not encrypted by OUTPOST, and older exports remain importable with their original passphrase.
+
 ## Build and load
 
 From the repository root, with the checked-in Gecko v7 assets present:

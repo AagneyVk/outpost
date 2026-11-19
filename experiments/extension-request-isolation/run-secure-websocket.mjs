@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { WebSocketServer } from 'ws';
+import { waitForAsync } from '../../tools/wait-for-async.mjs';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const temporary = await fs.mkdtemp(path.join(dir, 'temporary-wss-'));
@@ -188,7 +189,7 @@ try {
 
   await lifecycle.evaluate(() => fixtureStage('workspace_session=alpha'));
   await lifecycle.close();
-  await page.waitForFunction(async () => (await chrome.declarativeNetRequest.getSessionRules()).length === 0, null, { timeout: 15000 });
+  await waitForAsync(() => page.evaluate(async () => (await chrome.declarativeNetRequest.getSessionRules()).length === 0), { timeout: 15000 });
 
   // In this Chrome build, --allow-insecure-localhost did not permit a worker
   // WSS connection. This separate disposable profile uses the broad test-only

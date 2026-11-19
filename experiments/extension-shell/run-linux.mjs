@@ -4,6 +4,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { waitForAsync } from '../../tools/wait-for-async.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url)), root = path.resolve(here, '../..');
 const flag = process.argv.indexOf('--addon');
 if (flag >= 0 && !process.argv[flag + 1]) throw Error('--addon requires a directory path');
@@ -42,10 +43,10 @@ try {
     await input.focus();
     await terminal.keyboard.type("printf 'synthetic extension file' > /home/outpost/extension-test.txt");
     await terminal.keyboard.press('Enter');
-    await terminal.waitForFunction(async () => {
+    await waitForAsync(() => terminal.evaluate(async () => {
       try { return new TextDecoder().decode(await window.vm.read_file('/home/outpost/extension-test.txt')) === 'synthetic extension file'; }
       catch { return false; }
-    }, null, { timeout: 45000 });
+    }), { timeout: 45000 });
     await terminal.locator('#files').click();
     await terminal.getByRole('button', { name: /extension-test\.txt/ }).waitFor({ timeout: 45000 });
     const [download] = await Promise.all([terminal.waitForEvent('download'), terminal.getByRole('button', { name: /extension-test\.txt/ }).click()]);

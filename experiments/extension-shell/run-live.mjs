@@ -4,6 +4,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { waitForAsync } from '../../tools/wait-for-async.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const flag = process.argv.indexOf('--addon');
@@ -38,10 +39,10 @@ try {
   assert.equal(await page.locator('#start-error').isHidden(), true, await page.locator('#start-error').textContent());
   await page.locator('#address').fill('example.com');
   await page.locator('#address').press('Enter');
-  await page.waitForFunction(async () => {
-    try { return await window.__outpostTestGecko.evalChrome("String(document.body?.textContent?.includes('documentation examples') || false)") === 'true'; }
+  await waitForAsync(async () => {
+    try { return await page.evaluate(() => window.__outpostTestGecko.evalChrome("String(document.body?.textContent?.includes('documentation examples') || false)")) === 'true'; }
     catch { return false; }
-  }, null, { timeout: 90000 });
+  }, { timeout: 90000 });
   const guest = JSON.parse(await page.evaluate(async () => window.__outpostTestGecko.evalChrome(
     "JSON.stringify({href:location.href,title:document.title,secure:window.isSecureContext,contentLoaded:document.body?.textContent?.includes('documentation examples') || false})")));
   assert.equal(guest.href, 'https://example.com/');
