@@ -76,6 +76,7 @@ try {
   await page.locator('#address').press('Enter');
   await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Loaded extension-fixture.test'), null, { timeout: 60000 });
   assert.ok(relayRequests.some(request => /^GET \/\?synthetic-private-query-marker HTTP\/1\.[01]/.test(request)), 'Gecko must send its request through the mocked relay');
+  assert.equal(await page.locator('#relay-recovery').isHidden(), true, 'a working relay must not report disconnection');
   assert.ok(relayRequests.every(request => !/host_canary/i.test(request)), 'host-browser cookie must not enter guest requests');
   await page.locator('#new-tab').click();
   assert.equal(await page.locator('#tabs .browser-tab').count(), 2);

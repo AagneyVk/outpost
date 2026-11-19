@@ -49,6 +49,7 @@ try {
   assert.equal(guest.title, 'Example Domain');
   assert.equal(guest.secure, true);
   assert.equal(guest.contentLoaded, true);
+  assert.equal(await page.locator('#relay-recovery').isHidden(), true, 'a working relay must not report disconnection');
   const certificateResults = [];
   for (const host of ['expired.badssl.com', 'self-signed.badssl.com', 'wrong.host.badssl.com']) {
     await page.locator('#address').fill('https://' + host + '/');

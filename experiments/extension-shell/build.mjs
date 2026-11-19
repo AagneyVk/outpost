@@ -65,7 +65,7 @@ const startPath = path.join(destination, 'gecko-lab/start.mjs');
 let start = await fs.readFile(startPath, 'utf8');
 start = "import { createIsolatedRelaySocket } from './isolated-relay.mjs';\n" + start;
 start = replaceOnce(start, "    const { Gecko } = await import('./engine/gecko-input-v7.js');",
-  "    const { Gecko, setOutpostRelaySocket } = await import('./engine/gecko-input-v7.js');\n    setOutpostRelaySocket(await createIsolatedRelaySocket());", 'isolated relay setup');
+  "    const { Gecko, setOutpostRelaySocket } = await import('./engine/gecko-input-v7.js');\n    setOutpostRelaySocket(await createIsolatedRelaySocket(relayDisconnected));", 'isolated relay setup');
 start = replaceOnce(start,
   "const relay = custom ? new URL(custom) : new URL('/network/', location.href);\n    if (!custom) relay.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';",
   "const relay = new URL(custom || 'wss://wisp.mercurywork.shop/');", 'relay selection');

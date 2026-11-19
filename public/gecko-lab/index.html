@@ -97,6 +97,10 @@
   <span>The browser is taking longer than expected. If it is stuck, restart OUTPOST. Unsaved page changes may be lost.</span>
   <button id="restart-engine" type="button">Restart OUTPOST</button>
 </aside>
+<aside id="relay-recovery" role="alert" hidden>
+  <span>The relay disconnected. Your last action may have completed. Save and restart the browser, then check the result before retrying.</span>
+  <button id="restart-relay" type="button">Save and restart</button>
+</aside>
 <footer id="status" role="status" hidden></footer>
 <script type="module" src="/gecko-lab/start.mjs"></script>
 </html>

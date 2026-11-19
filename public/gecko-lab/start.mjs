@@ -7,6 +7,20 @@ import { isCertificateError } from './certificate-errors.mjs';
 const start = document.querySelector('#start');
 const startError = document.querySelector('#start-error');
 const status = document.querySelector('#status');
+const resumingAfterRelay = location.hash === '#relay-restart';
+const relayRestartKey = 'outpost-relay-restart-url';
+let relaySettingsRestored = !resumingAfterRelay;
+if (resumingAfterRelay) {
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const savedRelay = sessionStorage.getItem(relayRestartKey);
+    sessionStorage.removeItem(relayRestartKey);
+    if (savedRelay !== null) {
+      document.querySelector('#relay-url').value = savedRelay;
+      relaySettingsRestored = true;
+    }
+  } catch { /* Ask the user to choose the relay again. */ }
+}
 new MutationObserver(() => {
   const message = status.textContent;
   status.hidden = !message || message === 'Search Google or enter an address.' || message.startsWith('Loaded ');
@@ -33,6 +47,9 @@ let gecko;
 let navigation;
 let toolsWindow;
 const recovery = document.querySelector('#browser-recovery');
+const relayRecovery = document.querySelector('#relay-recovery');
+const restartRelay = document.querySelector('#restart-relay');
+function relayDisconnected() { if (gecko) relayRecovery.hidden = false; }
 document.querySelector('#restart-engine').addEventListener('click', () => location.reload());
 document.querySelector('#workspace-tools').addEventListener('click', event => {
   const link = event.target.closest('a');
@@ -101,6 +118,7 @@ function releaseFrame() {
   previousFrame.width = 0;
 }
 let sessionWrite = Promise.resolve();
+let sessionWriteError;
 
 function saveTabs() {
   const session = {
@@ -111,7 +129,10 @@ function saveTabs() {
     active: tabs.indexOf(activeTab),
     zoom,
   };
-  sessionWrite = sessionWrite.then(() => writeBrowserSession(session)).catch(() => {
+  sessionWrite = sessionWrite.then(() => writeBrowserSession(session)).then(() => {
+    sessionWriteError = undefined;
+  }).catch(error => {
+    sessionWriteError = error;
     console.error('OUTPOST could not save tabs.');
   });
 }
@@ -268,22 +289,53 @@ resumeBrowser.onclick = () => {
 const profileFile = document.querySelector('#profile-file');
 const exitBrowser = document.querySelector('#exit-browser');
 let sessionCookieCapability = false;
-exitBrowser.onclick = async () => {
+async function saveSessionForRestart() {
+  saveTabs();
+  await Promise.all([sessionWrite, historyWrite]);
+  if (sessionWriteError) throw Error('Could not save open tabs. Keep the browser open and try again.');
+  if (!sessionCookieCapability)
+    throw Error('This browser build cannot save session logins. Reload OUTPOST to update it.');
+  if (await gecko.evalChrome('outpost:session-cookie-save') !== 'ok')
+    throw Error('Could not save session logins. Keep the browser open and try again.');
+}
+async function reportSessionSaveFailure(error) {
+  let message = error.message || 'Could not save the browser session.';
+  try { await clearSessionCookieSnapshot(); }
+  catch { message += ' A temporary session snapshot could not be removed.'; }
+  status.textContent = message;
+}
+restartRelay.onclick = async () => {
+  restartRelay.disabled = true;
   exitBrowser.disabled = true;
   status.textContent = 'Saving your browser session…';
   try {
-    await Promise.all([sessionWrite, historyWrite]);
-    if (!sessionCookieCapability)
-      throw Error('This browser build cannot save session logins. Reload OUTPOST to update it.');
-    if (await gecko.evalChrome('outpost:session-cookie-save') !== 'ok')
-      throw Error('Could not save session logins. Keep the browser open and try again.');
+    await saveSessionForRestart();
+    sessionStorage.setItem(relayRestartKey, document.querySelector('#relay-url').value);
+    const url = new URL(location.href);
+    url.hash = 'relay-restart';
+    history.replaceState(null, '', url);
+    location.reload();
+  } catch (error) {
+    try { sessionStorage.removeItem(relayRestartKey); } catch {}
+    await reportSessionSaveFailure(error);
+    restartRelay.disabled = false;
+    exitBrowser.disabled = false;
+  }
+};
+exitBrowser.onclick = async () => {
+  exitBrowser.disabled = true;
+  restartRelay.disabled = true;
+  status.textContent = 'Saving your browser session…';
+  try {
+    await saveSessionForRestart();
     const url = new URL(location.href);
     url.hash = 'export-profile';
     history.replaceState(null, '', url);
     location.reload();
   } catch (error) {
-    status.textContent = error.message || 'Could not save the browser session.';
+    await reportSessionSaveFailure(error);
     exitBrowser.disabled = false;
+    restartRelay.disabled = false;
   }
 };
 if (location.hash === '#export-profile') {
@@ -585,7 +637,13 @@ start.addEventListener('click', async () => {
     zoomOut.disabled = zoom === 50;
     zoomIn.disabled = zoom === 200;
     zoomReset.disabled = false;
-    if (position >= 0) navigate(stack[position], position);
+    if (position >= 0 && !resumingAfterRelay) navigate(stack[position], position);
+    else if (resumingAfterRelay) {
+      status.textContent = 'Browser restarted. Check the last action before retrying.';
+      showScene('Browser restarted', 'Check whether your last action completed before opening a page or trying again.', true);
+      address.value = position >= 0 ? stack[position].href : '';
+      address.focus();
+    }
     else address.focus();
   } catch (error) {
     console.error('OUTPOST could not start the browser.');
@@ -604,3 +662,10 @@ start.addEventListener('click', async () => {
     startError.hidden = false;
   }
 });
+if (resumingAfterRelay && relaySettingsRestored) start.click();
+else if (resumingAfterRelay) {
+  startError.textContent = 'Relay settings could not be restored. Check network settings before starting.';
+  startError.hidden = false;
+  status.textContent = startError.textContent;
+  document.querySelector('#relay-url').closest('details').open = true;
+}
