@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectLinuxRuntime, copyLinuxRuntime } from './linux-runtime.mjs';
+import { writeInventory } from './inventory.mjs';
 
 // Packages the existing relay-based browser. It deliberately does not include
 // any of the credential-bearing, hardcoded research transport engines.
@@ -18,6 +19,7 @@ const publicRoot = path.join(root, 'public');
 const files = [
   'workstation.css', 'tools.css', 'portable.js', 'theme/pixelify.ttf', 'theme/vt323.ttf', 'theme/OFL.txt', 'theme/VT323-OFL.txt',
   'gecko-lab/index.html', 'gecko-lab/browser.css', 'gecko-lab/start.mjs', 'gecko-lab/profile.mjs', 'gecko-lab/passphrase-policy.mjs',
+  'gecko-lab/isolated-relay.mjs', 'gecko-lab/relay-socket-frame.html',
   'gecko-lab/drag-capture.mjs', 'gecko-lab/wheel-queue.mjs', 'gecko-lab/engine-watchdog.mjs', 'gecko-lab/certificate-errors.mjs',
   'gecko-lab/files.html', 'gecko-lab/files.mjs', 'gecko-lab/return-to-browser.mjs',
   'gecko-lab/engine/gecko-input-v7.wasm.zst', 'gecko-lab/engine/LICENSE'
@@ -61,6 +63,9 @@ await fs.writeFile(filesPage, filesHtml);
 
 const startPath = path.join(destination, 'gecko-lab/start.mjs');
 let start = await fs.readFile(startPath, 'utf8');
+start = "import { createIsolatedRelaySocket } from './isolated-relay.mjs';\n" + start;
+start = replaceOnce(start, "    const { Gecko } = await import('./engine/gecko-input-v7.js');",
+  "    const { Gecko, setOutpostRelaySocket } = await import('./engine/gecko-input-v7.js');\n    setOutpostRelaySocket(await createIsolatedRelaySocket());", 'isolated relay setup');
 start = replaceOnce(start,
   "const relay = custom ? new URL(custom) : new URL('/network/', location.href);\n    if (!custom) relay.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';",
   "const relay = new URL(custom || 'wss://wisp.mercurywork.shop/');", 'relay selection');
@@ -77,9 +82,14 @@ const begin = source.indexOf(prefix), end = source.indexOf('\n', begin);
 if (begin < 0 || end < 0 || source.indexOf(prefix, begin + prefix.length) !== -1) throw Error('Unexpected Gecko bundle');
 const glue = JSON.parse(source.slice(begin + prefix.length, end).trim().replace(/;$/, ''));
 const loader = 'const geckoBlobUrl = ()=>_geckoUrl ??= toBlobUrl(geckosource_namespaceObject);';
-const packaged = replaceOnce(source.slice(0, begin) + source.slice(end + 1), loader,
+let packaged = replaceOnce(source.slice(0, begin) + source.slice(end + 1), loader,
   "const geckoBlobUrl = ()=>chrome.runtime.getURL('gecko-lab/engine/engine-glue.js');", 'Gecko loader');
+packaged = replaceOnce(packaged, 'this.ws = new WebSocket(this.wisp_url, subprotocol);',
+  "if (!outpostRelaySocket) throw Error('Isolated relay socket is unavailable.');\n    this.ws = new outpostRelaySocket(this.wisp_url, subprotocol);", 'isolated relay socket');
+packaged = "let outpostRelaySocket;\nexport function setOutpostRelaySocket(socket) { if (typeof socket !== 'function') throw Error('Invalid isolated relay socket.'); outpostRelaySocket = socket; }\n" + packaged;
 await fs.writeFile(path.join(destination, 'gecko-lab/engine/gecko-input-v7.js'), packaged);
 await fs.writeFile(path.join(destination, 'gecko-lab/engine/engine-glue.js'), glue);
 await fs.writeFile(path.join(destination, 'index.html'), '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/gecko-lab/index.html"><a href="/gecko-lab/index.html">Open OUTPOST</a>\n');
+const inventoryDigest = await writeInventory(destination);
 console.log('Built relay-based extension preview' + (linux ? ' with offline Linux' : '') + ' at ' + destination);
+console.log('Build inventory SHA-256: ' + inventoryDigest);

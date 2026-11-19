@@ -4,6 +4,10 @@ This packages the existing OUTPOST Gecko browser UI as an unpacked Manifest V3 e
 
 The extension asks for no broad host permissions, `debugger`, or access to existing browser tabs. Its packaged Gecko engine and decompressor run under the extension's content-security policy. The browser's guest pages and guest cookies still require a security review; this is not a claim of protection against a malicious host computer, compromised extension code, or browser vulnerabilities. The relay can observe destination metadata and unencrypted HTTP traffic. HTTPS is handled by the bundled Gecko engine over the relay.
 
+The extension opens its Wisp connection using a credentialless frame to isolate relay-domain cookies from the host browser. If the browser cannot provide this isolation, startup fails instead of silently falling back. Custom relays that depend on the host browser's existing cookies may need a different authentication method. The separate web-hosted OUTPOST version does not include this extension-specific change. See the [local relay isolation test](../relay-credentialless/README.md).
+
+Relay recovery is incomplete. A test-only attempt to reconnect after a socket failure caused Gecko to resend a synthetic interrupted POST, so that change is not included. An interrupted operation may have reached the website even when no response is visible; automatic retry and recovery need further investigation.
+
 Browser profile exports accept either the existing eight-character format or a longer passphrase of 16 or more characters. A longer, unique passphrase is recommended: short passphrases are vulnerable to offline guessing if an export is obtained. The live browser profile is not encrypted by OUTPOST, and older exports remain importable with their original passphrase.
 
 ## Build and load
@@ -15,6 +19,8 @@ node experiments/extension-shell/build.mjs
 ```
 
 By default this creates `../outpost-extension-preview`; `--out <new-directory>` chooses another existing-parent location. The builder refuses to overwrite an existing destination. In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the generated directory. This is not a signed Chrome Web Store package and has not been reviewed for store policy or distribution licensing; the exact upstream source and notices still need review. The Chrome toolbar button opens an OUTPOST browser tab.
+
+The builder writes `OUTPOST-BUILD-INVENTORY.json` and prints its SHA-256 digest. To detect changes, run `node experiments/extension-shell/verify-inventory.mjs ../outpost-extension-preview <trusted-inventory-sha256>`. Obtain the expected digest independently through a trusted channel; without it, the command checks self-consistency only. An unsigned inventory does not establish source provenance, publisher identity or reproducible builds.
 
 To include the previously prepared Linux demo runtime, use a separate new destination:
 
@@ -30,6 +36,7 @@ With Node dependencies and Chrome installed, the following use only temporary Ch
 
 ```powershell
 node --test experiments/extension-shell/build.test.mjs
+node --test experiments/extension-shell/inventory.test.mjs
 node experiments/extension-shell/run.mjs --addon ../outpost-extension-preview
 node experiments/extension-shell/run-cache.mjs --addon ../outpost-extension-preview
 node experiments/extension-shell/run-portable.mjs --addon ../outpost-extension-preview
