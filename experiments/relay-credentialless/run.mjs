@@ -3,6 +3,7 @@
 // self-signed certificate exception, and synthetic cookies only.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import https from 'node:https';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -18,6 +19,8 @@ const addon = path.resolve(flag >= 0 ? process.argv[flag + 1] : path.join(root, 
 const hardenedFlag = process.argv.indexOf('--hardened-addon');
 if (hardenedFlag >= 0 && !process.argv[hardenedFlag + 1]) throw Error('--hardened-addon requires a directory');
 const hardenedAddon = hardenedFlag >= 0 ? path.resolve(process.argv[hardenedFlag + 1]) : null;
+const livePreview = process.argv.includes('--encrypted-live-preview');
+if (livePreview && !hardenedAddon) throw Error('--encrypted-live-preview requires a hardened addon');
 if (process.argv.includes('--test-post') && !process.argv.includes('--test-recovery')) throw Error('--test-post requires --test-recovery');
 if (process.argv.includes('--experimental-reconnect') && (!hardenedAddon || !process.argv.includes('--test-post'))) throw Error('--experimental-reconnect requires a hardened addon and the synthetic POST control');
 if (process.argv.includes('--test-restart') && (!hardenedAddon || !process.argv.includes('--test-post') || process.argv.includes('--experimental-reconnect'))) throw Error('--test-restart requires a hardened addon and the POST control without experimental reconnect');
@@ -26,7 +29,9 @@ if (process.argv.includes('--test-tab-save-failure') && !process.argv.includes('
 if (process.argv.includes('--test-relay-save-failure') && !process.argv.includes('--test-restart')) throw Error('--test-relay-save-failure requires --test-restart');
 if (process.argv.includes('--test-missing-relay') && !hardenedAddon) throw Error('--test-missing-relay requires a hardened addon');
 if (process.argv.includes('--test-fallback') && !hardenedAddon) throw Error('--test-fallback requires a hardened addon');
-const temp = await fs.mkdtemp(path.join(here, 'temporary-relay-'));
+const tempRoot = livePreview ? path.resolve(os.tmpdir()) : here;
+const tempPrefix = livePreview ? 'outpost-live-relay-' : 'temporary-relay-';
+const temp = await fs.mkdtemp(path.join(tempRoot, tempPrefix));
 const contexts = [], requests = [], hostRequests = [];
 let server, wss, tlsErrors = 0, rejectedV2 = 0;
 try {
@@ -112,7 +117,7 @@ try {
       let source = await fs.readFile(start, 'utf8');
       const marker = '    await gecko.init();';
       if (source.indexOf(marker) < 0 || source.indexOf(marker) !== source.lastIndexOf(marker)) throw Error('Unexpected Gecko init.');
-      source = source.replace(marker, marker + '\n    window.__testGecko = gecko;');
+      source = source.replace(marker, marker + '\n    window.__testGecko = gecko;' + (livePreview && isolated ? '\n    window.__testEncryptedProfile = encryptedHandle.live;' : ''));
       await fs.writeFile(start, source);
     }
     if (failSave) {
@@ -167,6 +172,11 @@ try {
     }
     await page.locator('#welcome details').first().locator('summary').click();
     await page.locator('#relay-url').fill(fallback ? relay + 'fallback/' : relay);
+    if (livePreview && isolated) {
+      await page.locator('#live-mode').selectOption('create');
+      await page.locator('#live-passphrase').fill('synthetic long live passphrase');
+      await page.locator('#live-confirm').fill('synthetic long live passphrase');
+    }
     const count = requests.length, tlsErrorCount = tlsErrors, v2Count = rejectedV2;
     await page.locator('#start').click();
     await page.waitForFunction(() => !document.querySelector('#address').disabled || !document.querySelector('#start-error').hidden, null, { timeout: 180000 });
@@ -231,11 +241,16 @@ try {
           assert.equal(await page.locator('#restart-relay').isEnabled(), true);
           assert.equal(requests.length, beforeRestart, 'a failed save must not reconnect');
           assert.equal(requests.slice(count).flatMap(record => record.paths).filter(p => p.startsWith('POST /synthetic-submit HTTP/')).length, 1);
-          assert.equal(await page.evaluate(async () => (await import(chrome.runtime.getURL('gecko-lab/profile.mjs'))).hasSessionCookieSnapshot()), false, 'a failed save must remove a stale session snapshot');
+          assert.equal(await page.evaluate(async live => live ? Boolean(await window.__testEncryptedProfile.stat('outpost-session-cookies.dat')) : (await import(chrome.runtime.getURL('gecko-lab/profile.mjs'))).hasSessionCookieSnapshot(), livePreview), false, 'a failed save must remove a stale session snapshot');
           await context.close();
           return failRelaySave ? { relaySaveFailurePreservedPage: true } : failTabs ? { tabSaveFailurePreservedPage: true } : { saveFailurePreservedPage: true };
         }
         await Promise.all([page.waitForEvent('load', { timeout: 60000 }), page.locator('#restart-relay').click()]);
+        if (livePreview) {
+          await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Enter your live profile passphrase'), null, { timeout: 30000 });
+          await page.locator('#live-passphrase').fill('synthetic long live passphrase');
+          await page.locator('#start').click();
+        }
         await page.waitForFunction(() => !document.querySelector('#address').disabled || !document.querySelector('#start-error').hidden, null, { timeout: 180000 });
         assert.equal(await page.locator('#start-error').isHidden(), true, await page.locator('#start-error').textContent());
         assert.match(await page.locator('#status').textContent(), /check the last action/i);
@@ -298,6 +313,6 @@ try {
   for (const context of contexts) await context.close().catch(() => {});
   if (wss) await new Promise(resolve => wss.close(resolve));
   if (server) await new Promise(resolve => server.close(resolve));
-  if (path.dirname(temp) !== here || !path.basename(temp).startsWith('temporary-relay-')) throw Error('Invalid temporary path');
+  if (path.dirname(temp) !== tempRoot || !path.basename(temp).startsWith(tempPrefix)) throw Error('Invalid temporary path');
   await fs.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 }

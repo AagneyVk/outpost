@@ -25,3 +25,13 @@ test('rejects traversal and over-limit writes without destroying existing data',
   fs.destroy();
   assert.equal(await fs.stat('safe'), null);
 });
+test('identifies changed blocks, including partial last blocks', async () => {
+  const fs = new MemoryProfile();
+  await fs.writeFile('file', new Uint8Array([1, 2, 3, 4, 5, 6, 7]));
+  assert.deepEqual(fs.changedBlocks('file', new Uint8Array([1, 2, 3, 4, 5, 6, 7]), 4), []);
+  assert.deepEqual(fs.changedBlocks('file', new Uint8Array([1, 2, 9, 4, 5, 6, 7]), 4), [0]);
+  assert.deepEqual(fs.changedBlocks('file', new Uint8Array([1, 2, 3, 4, 5, 6]), 4), [1]);
+  assert.deepEqual(fs.changedBlocks('file', new Uint8Array([1, 2, 3, 4]), 4), []);
+  assert.deepEqual(fs.changedBlocks('missing', new Uint8Array([1, 2, 3, 4, 5]), 4), [0, 1]);
+  fs.destroy();
+});

@@ -86,6 +86,31 @@ export class MemoryProfile {
       path, isDir: entry.isDir, ...(entry.isDir ? {} : { data: entry.data.slice() })
     }));
   }
+  metadata() {
+    return [...this.#entries].filter(([path]) => path).map(([path, entry]) => ({
+      path, isDir: entry.isDir, size: entry.isDir ? 0 : entry.data.length
+    }));
+  }
+  changedBlocks(path, data, blockSize) {
+    path = this.#path(path);
+    if (!(data instanceof Uint8Array) || !Number.isSafeInteger(blockSize) || blockSize < 4 || blockSize % 4) throw Error('Invalid block comparison.');
+    const entry = this.#entries.get(path);
+    if (entry?.isDir) throw Error('Path is a directory.');
+    const old = entry?.data, count = Math.ceil(data.length / blockSize), changed = [];
+    for (let index = 0; index < count; index++) {
+      const offset = index * blockSize, length = Math.min(blockSize, data.length - offset);
+      if (!old || Math.min(blockSize, Math.max(0, old.length - offset)) !== length) { changed.push(index); continue; }
+      let different = false, i = 0;
+      if ((data.byteOffset + offset) % 4 === 0 && (old.byteOffset + offset) % 4 === 0) {
+        const words = Math.floor(length / 4), a = new Uint32Array(data.buffer, data.byteOffset + offset, words), b = new Uint32Array(old.buffer, old.byteOffset + offset, words);
+        for (let n = 0; n < words; n++) if (a[n] !== b[n]) { different = true; break; }
+        i = words * 4;
+      }
+      for (; !different && i < length; i++) if (data[offset + i] !== old[offset + i]) different = true;
+      if (different) changed.push(index);
+    }
+    return changed;
+  }
   destroy() {
     for (const entry of this.#entries.values()) if (!entry.isDir) entry.data.fill(0);
     this.#entries.clear(); this.#size = 0;

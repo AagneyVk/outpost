@@ -10,6 +10,8 @@ When the relay disconnects, the extension offers **Save and restart**. It saves 
 
 Browser profile exports accept either the existing eight-character format or a longer passphrase of 16 or more characters. A longer, unique passphrase is recommended: short passphrases are vulnerable to offline guessing if an export is obtained. The live browser profile is not encrypted by OUTPOST, and older exports remain importable with their original passphrase.
 
+A separate [encrypted-live-profile research preview](../encrypted-live-profile/README.md) is available for synthetic testing. It does not change this standard build, and it is not approved for production. See also the [relay health and reliability notes](RELIABILITY.md).
+
 ## Build and load
 
 From the repository root, with the checked-in Gecko v7 assets present:
