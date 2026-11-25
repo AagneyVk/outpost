@@ -1,10 +1,11 @@
 import { seal, unseal } from '/portable.js';
+import { validExportPassphrase } from './passphrase-policy.mjs';
 
 export const profileLock = 'outpost-gecko-profile';
 const defaultProfile = 'outpost-gecko-lab';
 const profileKey = 'outpost-gecko-profile-name';
 const limit = 64 * 1024 * 1024;
-const passphrasePolicy = { minLength: 8 };
+const passphrasePolicy = { minLength: 8, maxOutputBytes: limit + 1024 * 1024 };
 const fingerprint = 'ebd6c75179152624d9644865e11792ed25cadc714d9e0985f412baf9c637a086';
 
 export function profileName() {
@@ -16,6 +17,26 @@ async function sessionFile(create, name = 'outpost-session.json') {
   const root = await navigator.storage.getDirectory();
   const directory = await root.getDirectoryHandle(profileName(), { create });
   return directory.getFileHandle(name, { create });
+}
+
+export async function hasSessionCookieSnapshot() {
+  try {
+    await sessionFile(false, 'outpost-session-cookies.dat');
+    return true;
+  } catch (error) {
+    if (error.name === 'NotFoundError') return false;
+    throw error;
+  }
+}
+
+export async function clearSessionCookieSnapshot() {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const directory = await root.getDirectoryHandle(profileName());
+    await directory.removeEntry('outpost-session-cookies.dat');
+  } catch (error) {
+    if (error.name !== 'NotFoundError') throw error;
+  }
 }
 
 export async function readBrowserHistory() {
@@ -88,8 +109,8 @@ async function exclusively(operation) {
 }
 
 export function exportProfile(passphrase) {
-  if (!/^(?=.*[0-9])(?=.*[\p{P}\p{S}])\S{8}$/u.test(passphrase)) {
-    return Promise.reject(new Error('Use exactly 8 characters, including a number and a symbol, with no spaces.'));
+  if (!validExportPassphrase(passphrase)) {
+    return Promise.reject(new Error('Use 8 characters with a number and symbol, or a longer passphrase of at least 16 characters.'));
   }
   return exclusively(async () => {
     const root = await navigator.storage.getDirectory();

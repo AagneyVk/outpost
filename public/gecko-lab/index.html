@@ -47,6 +47,17 @@
     <p>Gecko runs inside this tab. Start the browser, then search Google or enter a website address.</p>
     <button id="start" class="primary" type="button">Start browser</button>
     <p id="start-error" role="alert" hidden></p>
+    <fieldset id="inspection-options" hidden>
+      <legend>HTTPS inspection compatibility</legend>
+      <p id="configured-inspection-authority" hidden></p>
+      <p id="inspection-setup-help">If your device administrator provided an approved certificate, you can select it here. Only allow a certificate you trust.</p>
+      <details id="inspection-file-options" open>
+        <summary>Choose a certificate file</summary>
+        <label for="inspection-ca">Approved certificate authority (.pem)</label>
+        <input id="inspection-ca" type="file" accept=".pem,.crt">
+      </details>
+      <a href="?launch=direct">Keep strict HTTPS</a>
+    </fieldset>
     <details>
       <summary>Network settings</summary>
       <label for="relay-url">Custom Wisp endpoint</label>
@@ -55,7 +66,8 @@
     </details>
     <details id="profile-options">
       <summary>Encrypted browser profile</summary>
-      <p>New exports use exactly 8 characters with a number and a symbol. For imports, use the original passphrase. Close other running OUTPOST browser tabs first.</p>
+      <p>For a new export, use 8 characters with a number and symbol, or a passphrase of 16 or more characters. A longer, unique passphrase is safer against guessing. For imports, use the original passphrase. Use Exit browser to save session logins before exporting, and close other running OUTPOST browser tabs first.</p>
+      <p>OUTPOST does not encrypt the working profile stored in this browser, including saved website sessions. The downloaded profile export is encrypted. On a shared computer, confirm your export before clearing the local profiles; Browser Files and Linux workspaces are separate.</p>
       <button id="resume-browser" type="button" hidden>Back to browser</button>
       <label for="profile-passphrase">Profile passphrase</label>
       <input id="profile-passphrase" type="password" autocomplete="off" minlength="8" maxlength="1024">
@@ -88,6 +100,10 @@
         <p id="scene-detail"></p>
         <button id="scene-address" type="button" hidden>Edit address</button>
         <button id="scene-view" type="button" hidden>Show page</button>
+        <div id="scene-inspection" hidden>
+          <p>Security software may be checking this connection. In compatibility mode it can read inspected HTTPS traffic.</p>
+          <a id="inspection-mode-link" href="?launch=direct&amp;inspection=1">Review HTTPS inspection options</a>
+        </div>
       </div>
     </div>
   </section>
@@ -95,6 +111,10 @@
 <aside id="browser-recovery" role="alert" hidden>
   <span>The browser is taking longer than expected. If it is stuck, restart OUTPOST. Unsaved page changes may be lost.</span>
   <button id="restart-engine" type="button">Restart OUTPOST</button>
+</aside>
+<aside id="relay-recovery" role="alert" hidden>
+  <span>The relay disconnected. Your last action may have completed. Save and restart the browser, then check the result before retrying.</span>
+  <button id="restart-relay" type="button">Save and restart</button>
 </aside>
 <footer id="status" role="status" hidden></footer>
 <script type="module" src="/gecko-lab/start.mjs"></script>

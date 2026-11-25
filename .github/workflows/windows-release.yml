@@ -1,0 +1,31 @@
+name: Publish Windows launcher
+on:
+  push:
+    tags: ['windows-v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+      - run: npm ci
+      - name: Build and start the standalone launcher
+        shell: pwsh
+        run: |
+          ./tools/build-windows-launcher.ps1 -Destination OUTPOST-Windows-x64.exe -NodeLicense node-v24.14.1-LICENSE.txt
+          $binary = (Resolve-Path OUTPOST-Windows-x64.exe).Path
+          $process = Start-Process -FilePath $binary -ArgumentList '--check' -WorkingDirectory $env:RUNNER_TEMP -WindowStyle Hidden -PassThru
+          if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'Launcher readiness test timed out.' }
+          if ($process.ExitCode -ne 0) { throw 'Launcher readiness test failed.' }
+          $hash = (Get-FileHash -Algorithm SHA256 $binary).Hash.ToLowerInvariant()
+          "$hash  OUTPOST-Windows-x64.exe" | Set-Content -Encoding ascii SHA256SUMS.txt
+      - name: Publish launcher and checksum
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME OUTPOST-Windows-x64.exe SHA256SUMS.txt --verify-tag --title 'OUTPOST for Windows x64' --notes 'Double-click the unsigned launcher to open OUTPOST with direct networking. The web app continues to use Wisp. Managed Windows machines may block local executables or require an administrator-approved HTTPS inspection configuration.'

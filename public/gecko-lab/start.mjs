@@ -1,11 +1,30 @@
-import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory } from './profile.mjs';
+import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory, hasSessionCookieSnapshot, clearSessionCookieSnapshot } from './profile.mjs';
 import { captureDrag } from './drag-capture.mjs';
 import { optimizeWheelQueue } from './wheel-queue.mjs';
 import { watchEngine } from './engine-watchdog.mjs';
+import { isCertificateError } from './certificate-errors.mjs';
 
 const start = document.querySelector('#start');
 const startError = document.querySelector('#start-error');
+const directLaunch = location.hostname === '127.0.0.1' &&
+  new URLSearchParams(location.search).get('launch') === 'direct';
+const inspectionMode = directLaunch && new URLSearchParams(location.search).get('inspection') === '1';
+let configuredInspection;
 const status = document.querySelector('#status');
+const resumingAfterRelay = location.hash === '#relay-restart';
+const relayRestartKey = 'outpost-relay-restart-url';
+let relaySettingsRestored = !resumingAfterRelay;
+if (resumingAfterRelay) {
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const savedRelay = sessionStorage.getItem(relayRestartKey);
+    sessionStorage.removeItem(relayRestartKey);
+    if (savedRelay !== null) {
+      document.querySelector('#relay-url').value = savedRelay;
+      relaySettingsRestored = true;
+    }
+  } catch { /* Ask the user to choose the relay again. */ }
+}
 new MutationObserver(() => {
   const message = status.textContent;
   status.hidden = !message || message === 'Search Google or enter an address.' || message.startsWith('Loaded ');
@@ -19,11 +38,13 @@ const viewport = document.querySelector('#viewport');
 const scene = document.querySelector('#browser-scene');
 const sceneAddress = document.querySelector('#scene-address');
 const sceneView = document.querySelector('#scene-view');
+const sceneInspection = document.querySelector('#scene-inspection');
 function showScene(title, detail, editable = false, canView = false) {
   document.querySelector('#scene-title').textContent = title;
   document.querySelector('#scene-detail').textContent = detail;
   sceneAddress.hidden = !editable;
   sceneView.hidden = !canView;
+  sceneInspection.hidden = true;
   scene.hidden = false;
 }
 sceneAddress.addEventListener('click', () => { address.focus(); address.select(); });
@@ -32,6 +53,9 @@ let gecko;
 let navigation;
 let toolsWindow;
 const recovery = document.querySelector('#browser-recovery');
+const relayRecovery = document.querySelector('#relay-recovery');
+const restartRelay = document.querySelector('#restart-relay');
+function relayDisconnected() { if (gecko) relayRecovery.hidden = false; }
 document.querySelector('#restart-engine').addEventListener('click', () => location.reload());
 document.querySelector('#workspace-tools').addEventListener('click', event => {
   const link = event.target.closest('a');
@@ -58,6 +82,7 @@ let historyWrite = Promise.resolve();
 const clearHistory = document.querySelector('#clear-history');
 
 function recordVisit(url) {
+  if (inspectionMode) return;
   visits.push(url);
   historyWrite = historyWrite.then(() => writeBrowserHistory(url)).catch(error => {
     status.textContent = 'History could not be saved. ' + error.message;
@@ -100,8 +125,10 @@ function releaseFrame() {
   previousFrame.width = 0;
 }
 let sessionWrite = Promise.resolve();
+let sessionWriteError;
 
 function saveTabs() {
+  if (inspectionMode) return;
   const session = {
     tabs: tabs.map(tab => {
       const start = Math.max(0, tab.position - 49);
@@ -110,8 +137,11 @@ function saveTabs() {
     active: tabs.indexOf(activeTab),
     zoom,
   };
-  sessionWrite = sessionWrite.then(() => writeBrowserSession(session)).catch(error => {
-    console.error('OUTPOST could not save tabs', error);
+  sessionWrite = sessionWrite.then(() => writeBrowserSession(session)).then(() => {
+    sessionWriteError = undefined;
+  }).catch(error => {
+    sessionWriteError = error;
+    console.error('OUTPOST could not save tabs.');
   });
 }
 
@@ -266,14 +296,59 @@ resumeBrowser.onclick = () => {
 };
 const profileFile = document.querySelector('#profile-file');
 const exitBrowser = document.querySelector('#exit-browser');
-exitBrowser.onclick = async () => {
-  exitBrowser.disabled = true;
-  status.textContent = 'Saving tabs and history…';
+let sessionCookieCapability = false;
+async function saveSessionForRestart() {
+  saveTabs();
   await Promise.all([sessionWrite, historyWrite]);
-  const url = new URL(location.href);
-  url.hash = 'export-profile';
-  history.replaceState(null, '', url);
-  location.reload();
+  if (sessionWriteError) throw Error('Could not save open tabs. Keep the browser open and try again.');
+  if (!sessionCookieCapability)
+    throw Error('This browser build cannot save session logins. Reload OUTPOST to update it.');
+  if (await gecko.evalChrome('outpost:session-cookie-save') !== 'ok')
+    throw Error('Could not save session logins. Keep the browser open and try again.');
+}
+async function reportSessionSaveFailure(error) {
+  let message = error.message || 'Could not save the browser session.';
+  try { await clearSessionCookieSnapshot(); }
+  catch { message += ' A temporary session snapshot could not be removed.'; }
+  status.textContent = message;
+}
+restartRelay.onclick = async () => {
+  restartRelay.disabled = true;
+  exitBrowser.disabled = true;
+  status.textContent = 'Saving your browser session…';
+  try {
+    await saveSessionForRestart();
+    sessionStorage.setItem(relayRestartKey, document.querySelector('#relay-url').value);
+    const url = new URL(location.href);
+    url.hash = 'relay-restart';
+    history.replaceState(null, '', url);
+    location.reload();
+  } catch (error) {
+    try { sessionStorage.removeItem(relayRestartKey); } catch {}
+    await reportSessionSaveFailure(error);
+    restartRelay.disabled = false;
+    exitBrowser.disabled = false;
+  }
+};
+exitBrowser.onclick = async () => {
+  if (inspectionMode) {
+    location.replace(location.pathname + '?launch=direct');
+    return;
+  }
+  exitBrowser.disabled = true;
+  restartRelay.disabled = true;
+  status.textContent = 'Saving your browser session…';
+  try {
+    await saveSessionForRestart();
+    const url = new URL(location.href);
+    url.hash = 'export-profile';
+    history.replaceState(null, '', url);
+    location.reload();
+  } catch (error) {
+    await reportSessionSaveFailure(error);
+    exitBrowser.disabled = false;
+    restartRelay.disabled = false;
+  }
 };
 if (location.hash === '#export-profile') {
   history.replaceState(null, '', location.pathname + location.search);
@@ -343,24 +418,26 @@ document.querySelector('#fullscreen').addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await document.documentElement.requestFullscreen();
-  } catch (error) {
-    console.error(error);
+  } catch {
+    console.error('OUTPOST could not change full screen.');
   }
 });
 
-function finishNavigation(message) {
+function finishNavigation(message, certificateFailure = false) {
   clearTimeout(navigation.timer);
   navigation = undefined;
   status.textContent = message;
   releaseFrame();
   pageVisible = message.startsWith('Loaded ');
   if (pageVisible) scene.hidden = true;
-  else showScene('Page load unconfirmed', message, true, true);
+  else if (certificateFailure) {
+    showScene('HTTPS certificate could not be verified', message, true);
+    sceneInspection.hidden = !directLaunch || inspectionMode;
+  } else showScene('Page load unconfirmed', message, true, true);
   updateControls();
 }
 
 function reportEngineMessage(message) {
-  console.debug(message);
   const result = /^xul_render: load (stop|FAILED) status=(0x[0-9a-f]+).*? req=(https?:\/\/\S+)/i.exec(message);
   if (!result) return;
   if (!navigation) {
@@ -409,8 +486,11 @@ function reportEngineMessage(message) {
     activeTab.position = position;
     saveTabs();
     finishNavigation('Loaded ' + host);
-  } else if (result[2] === '0x805a1ff3') {
-    finishNavigation('Gecko could not verify the HTTPS certificate for ' + host + '.');
+  } else if (isCertificateError(result[2])) {
+    const hint = directLaunch
+      ? ' Antivirus or workplace HTTPS inspection can cause this. If it also happens on other sites, ask your device administrator.'
+      : '';
+    finishNavigation('Gecko could not verify the HTTPS certificate for ' + host + '.' + hint, true);
   } else {
     finishNavigation('Could not load ' + host + ' (' + result[2] + ').');
   }
@@ -426,7 +506,7 @@ document.querySelector('#navigation').addEventListener('submit', event => {
     if (/^https?:\/\//i.test(value)) {
       url = new URL(value);
     } else if (/^(?:localhost|\[[a-f\d:]+\]|[\w-]+(?:\.[\w-]+)+)(?::\d+)?(?:[/?#]\S*)?$/i.test(value)) {
-      url = new URL((value.toLowerCase() === 'example.com' ? 'http://' : 'https://') + value);
+      url = new URL('https://' + value);
     } else {
       url = new URL('https://www.google.com/search');
       url.searchParams.set('q', value);
@@ -458,8 +538,8 @@ async function navigate(url, targetPosition) {
     zoomDocumentReady = true;
     if (nativeZoom) await resizeSurface();
     canvas.focus();
-  } catch (error) {
-    console.error(error);
+  } catch {
+    console.error('OUTPOST could not open the page.');
     if (navigation?.url === url) finishNavigation('Could not open ' + url.hostname);
   }
 }
@@ -481,6 +561,30 @@ start.addEventListener('click', async () => {
   showScene('Starting OUTPOST', 'Loading the browser engine on this device.');
   let releaseProfile;
   try {
+    let inspectionProfile, inspectionCertificate, preparedInspectionTrust = false;
+    if (inspectionMode) {
+      let digest;
+      const file = document.querySelector('#inspection-ca').files[0];
+      const useConfigured = configuredInspection && !file;
+      if (useConfigured) digest = configuredInspection.fingerprint;
+      else {
+        if (!file || file.size > 34000) throw Error('Approve the configured authority or choose a single approved PEM certificate authority.');
+        const pem = /^-----BEGIN CERTIFICATE-----\s+([A-Za-z0-9+/=\r\n]+)\s+-----END CERTIFICATE-----$/.exec((await file.text()).trim());
+        if (!pem) throw Error('Choose a single approved PEM certificate authority.');
+        inspectionCertificate = pem[1].replace(/[\r\n]/g, '');
+        const der = Uint8Array.from(atob(inspectionCertificate), c => c.charCodeAt(0));
+        digest = new Uint8Array(await crypto.subtle.digest('SHA-256', der)).toHex();
+      }
+      const { MemoryProfile } = await import('./inspection-memory.mjs');
+      inspectionProfile = new MemoryProfile();
+      const prepared = await fetch('./inspection-cert-db?sha256=' + digest, {cache:'no-store'});
+      if (prepared.ok) {
+        const database = new Uint8Array(await prepared.arrayBuffer());
+        if (!database.length || database.length > 1024 * 1024) throw Error('Invalid prepared certificate database.');
+        await inspectionProfile.writeFile('cert9.db', database);
+        preparedInspectionTrust = true;
+      } else if (useConfigured || prepared.status !== 404) throw Error('Could not load the approved certificate database.');
+    }
     const acquired = await new Promise((resolve, reject) => {
       navigator.locks.request(profileLock, { ifAvailable: true }, lock => {
         resolve(Boolean(lock));
@@ -494,7 +598,7 @@ start.addEventListener('click', async () => {
     if (custom && (relay.protocol !== 'wss:' || relay.username || relay.password || relay.hash)) {
       throw Error('Enter a secure wss:// relay URL without credentials or a fragment.');
     }
-    const { Gecko } = await import('./engine/gecko-input-v6.js');
+    const { Gecko } = await import('./engine/gecko-input-v7.js');
     const initial = surfaceSize();
     gecko = new Gecko({
       canvas,
@@ -503,16 +607,25 @@ start.addEventListener('click', async () => {
       wispUrl: relay.href,
       print: reportEngineMessage,
       printErr: reportEngineMessage,
-      wasm: { url: new URL('./engine/gecko-input-v4.wasm.zst', import.meta.url).href, compressed: true },
-      profile: profileName(),
+      wasm: { url: new URL('./engine/gecko-input-v7.wasm.zst', import.meta.url).href, compressed: true },
+      profile: inspectionProfile ?? profileName(),
       env: { GECKO_NOWASMJIT: '1' },
     });
     optimizeWheelQueue(gecko, canvas);
     await gecko.init();
+    if (inspectionMode && !preparedInspectionTrust && await gecko.evalChrome('outpost:inspection-ca:' + inspectionCertificate) !== 'ok') {
+      throw Error('This Gecko build could not enable inspection compatibility. The certificate was not accepted for browsing.');
+    }
     watchEngine(gecko, { show: () => { recovery.hidden = false; }, hide: () => { recovery.hidden = true; } });
-    await restoreTabs().catch(error => console.warn('Could not restore tabs', error));
-    const savedHistory = await readBrowserHistory().catch(error => {
-      console.warn('Could not read history', error);
+    sessionCookieCapability = await gecko.evalChrome('outpost:session-cookie-capability') === 'outpost-session-cookies-v1';
+    if (!inspectionMode && await hasSessionCookieSnapshot()) {
+      if (!sessionCookieCapability || await gecko.evalChrome('outpost:session-cookie-restore') !== 'ok')
+        throw Error('Could not restore session logins. Your saved profile has not been removed.');
+      await clearSessionCookieSnapshot();
+    }
+    if (!inspectionMode) await restoreTabs().catch(() => console.warn('Could not restore tabs.'));
+    const savedHistory = inspectionMode ? [] : await readBrowserHistory().catch(() => {
+      console.warn('Could not read history.');
       return [];
     });
     for (const value of savedHistory) {
@@ -521,7 +634,7 @@ start.addEventListener('click', async () => {
         if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) visits.push(url);
       } catch {}
     }
-    clearHistory.disabled = false;
+    clearHistory.disabled = inspectionMode;
     // This engine paints native page zoom at device resolution. Delay setting
     // the scale until a document exists, including for restored sessions.
     nativeZoom = true;
@@ -557,22 +670,29 @@ start.addEventListener('click', async () => {
       }
     };
     await resizeSurface();
-    const resize = () => resizeSurface().catch(console.error);
+    const resize = () => resizeSurface().catch(() => console.error('OUTPOST could not resize the browser.'));
     new ResizeObserver(resize).observe(viewport);
     window.addEventListener('resize', resize);
     status.textContent = 'Search Google or enter an address.';
     showScene('Ready to browse', 'Search Google or enter a website address.', true);
     address.disabled = false;
     exitBrowser.disabled = false;
+    if (inspectionMode) exitBrowser.textContent = 'End temporary session';
     document.querySelector('#tab-strip').hidden = false;
     updateControls();
     zoomOut.disabled = zoom === 50;
     zoomIn.disabled = zoom === 200;
     zoomReset.disabled = false;
-    if (position >= 0) navigate(stack[position], position);
+    if (position >= 0 && !resumingAfterRelay) navigate(stack[position], position);
+    else if (resumingAfterRelay) {
+      status.textContent = 'Browser restarted. Check the last action before retrying.';
+      showScene('Browser restarted', 'Check whether your last action completed before opening a page or trying again.', true);
+      address.value = position >= 0 ? stack[position].href : '';
+      address.focus();
+    }
     else address.focus();
   } catch (error) {
-    console.error(error);
+    console.error('OUTPOST could not start the browser.');
     if (gecko) {
       gecko.destroy();
       start.textContent = 'Reload OUTPOST';
@@ -588,3 +708,40 @@ start.addEventListener('click', async () => {
     startError.hidden = false;
   }
 });
+if (resumingAfterRelay && relaySettingsRestored) start.click();
+else if (resumingAfterRelay) {
+  startError.textContent = 'Relay settings could not be restored. Check network settings before starting.';
+  startError.hidden = false;
+  status.textContent = startError.textContent;
+  document.querySelector('#relay-url').closest('details').open = true;
+} else if (directLaunch) {
+  const relayField = document.querySelector('#relay-url');
+  relayField.value = '';
+  relayField.closest('details').hidden = true;
+  if (inspectionMode) {
+    document.querySelector('#inspection-options').hidden = false;
+    document.querySelector('#profile-options').hidden = true;
+    document.querySelector('#restart-relay').hidden = true;
+    start.textContent = 'Start and allow HTTPS inspection';
+    const input = document.querySelector('#inspection-ca');
+    const refreshLabel = () => {
+      start.textContent = configuredInspection && !input.files.length
+        ? 'Allow ' + configuredInspection.name + ' and start'
+        : 'Start and allow HTTPS inspection';
+    };
+    input.addEventListener('change', refreshLabel);
+    fetch('./inspection-authority', {cache:'no-store'}).then(async response => {
+      if (!response.ok) return;
+      const authority = await response.json();
+      if (typeof authority.subject !== 'string' || !/^[0-9a-f]{64}$/.test(authority.fingerprint)) return;
+      const name = authority.subject.split('\n').find(entry => entry.startsWith('CN='))?.slice(3) ?? authority.subject;
+      configuredInspection = {...authority, name};
+      const description = document.querySelector('#configured-inspection-authority');
+      description.textContent = name + ' can inspect HTTPS traffic in this temporary session.';
+      description.hidden = false;
+      document.querySelector('#inspection-setup-help').hidden = true;
+      document.querySelector('#inspection-file-options').open = false;
+      refreshLabel();
+    }).catch(() => {});
+  } else start.click();
+}

@@ -21,7 +21,22 @@ git checkout --detach bc69aaa5e2c5388bcf93a43b975b490bb940f4c0
 make libxul RELEASE=1
 ```
 
-The distributed engine applies `patch-native-zoom.py`, `patch-input-latency.py`, `patch-trackpad.py`, and `patch-zoom-render.py` to that pinned revision before building, in that order. The patches wake the command mailbox, preserve fractional wheel input, use Gecko's default scroll handling, and render native page zoom in device pixels with correctly mapped input coordinates. Apply the scripts before `make libxul RELEASE=1`. Apply the host-only `patch-scroll-paint.mjs` and then `patch-wasm-pointers.mjs` to the resulting JavaScript bundle. The resulting `gecko-input-v5.js` uses the matching `gecko-input-v4.wasm.zst`. Apply `node tools/gecko-wasm/patch-key-burst.mjs public/gecko-lab/engine/gecko-input-v5.js public/gecko-lab/engine/gecko-input-v6.js` to obtain the current host bundle. It skips intermediate software repaints when more key events are queued, without dropping or reordering keys, and leaves the last key to paint. Keep the previous bundle and matching WASM available. Native zoom is applied after a page exists, including when restoring a saved session.
+The engine applies `patch-native-zoom.py`, `patch-input-latency.py`, `patch-trackpad.py`, `patch-zoom-render.py`, and `patch-session-cookies.py` to that pinned revision before building, in that order. The last patch includes `session-cookie-snapshot.cpp` beside it and adds explicit session-cookie save and restore commands; it does not change Gecko's network transport. The other patches wake the command mailbox, preserve fractional input, use Gecko's default scrolling, and render native page zoom with mapped input coordinates.
+
+The v7 host bundle reuses the reviewed v6 UI and input code with the new build's generated glue and GRE data. Assemble it with `node tools/gecko-wasm/assemble-session-engine.mjs <gecko.js/wasm> <output-js>` and use the matching `gecko.wasm.zst`; the current WASM is recompressed with zstd level 12. The saved isolated build used the pinned toolchain, `GECKO_RELEASE=1`, and `NO_WASM_OPT=1`. A fresh source build still requires reproducing that environment. Keep previous assets available for compatibility checks. Native zoom is applied after a page exists, including when restoring a saved session.
+
+The Windows launcher shows **HTTPS inspection options** after a certificate error. Select a single administrator-provided PEM CA and confirm by starting the temporary session. This allows the device's inspector to read intercepted HTTPS. The Gecko profile lives in memory and its trust database is excluded from exports. **End temporary session** returns to strict mode.
+
+For v7, prepare a fresh NSS database containing only the approved CA in an isolated directory. Use Mozilla NSS `certutil` (the Windows system program of the same name does not support these commands):
+
+```sh
+mkdir empty-nss
+certutil -N -d sql:empty-nss --empty-password
+certutil -A -d sql:empty-nss -n "Approved HTTPS inspection CA" -t "C,," -i approved-ca.der
+certutil -L -d sql:empty-nss
+```
+
+Place `cert9.db` and the matching `approved-ca.der` in the checkout's ignored `local-inspection` directory. Use files generated and reviewed by the administrator. Selecting the PEM representation of that same certificate loads the prepared database into the temporary profile. The database and authority are device configuration and should never be distributed in a portable workspace. The newer source also contains an experimental import command for use without a prepared database once a rebuilt engine is available. Verify wrong hostname, expiry, and rejection of unapproved certificates before distribution.
 
 With the app running locally, `node tools/gecko-wasm/measure-input-burst.mjs` measures a synthetic trusted typing burst through its final visible result; add `--baseline` to run the same check with v5. This does not establish latency on every website or input device.
 
@@ -41,11 +56,11 @@ The lab uses the minimal GRE and skips the desktop Firefox frontend. The experim
 
 To use a separate relay, expand **Network settings** before starting Gecko and enter its `wss://` URL. The relay must support Wisp and accept WebSocket upgrades from the preview's origin. Leave the field blank for OUTPOST's bundled relay.
 
-Close the running OUTPOST browser tab, then reopen OUTPOST and expand **Encrypted browser profile** before starting Gecko. Enter an eight-character passphrase containing a number and a symbol, with no spaces, and export. On another browser, select the export and enter its passphrase, import, then start Gecko. An import is staged in a separate profile directory before it becomes active.
+Use **Exit browser** inside OUTPOST before exporting. This saves Gecko's non-private session cookies before the engine stops; closing the host browser tab or crashing does not reliably save them. In the export screen, enter an eight-character passphrase containing a number and a symbol, with no spaces, and export. On another browser, select the export and enter its passphrase, import, then start Gecko. An import is staged in a separate profile directory before it becomes active. OUTPOST restores the snapshot before navigating and consumes it so an old session is not reintroduced after a later logout or reload. If saving or restoring fails, the app displays an error and preserves the profile.
 
-The export is encrypted on the device. The active profile is stored in the host browser's origin storage. On a borrowed computer, clear OUTPOST's site data after verifying that you have your export. Keep the passphrase and matching engine build.
+The export is encrypted on the device. The active profile and the pre-export session snapshot are stored in the host browser's origin storage; they are not encrypted there by the export passphrase. On a borrowed computer, clear OUTPOST's site data after verifying that you have your export. Keep the passphrase and matching engine build. Session storage, device-bound authentication and server-side expiry can still prevent a website login from transferring.
 
-With the development dependencies installed and the preview running, run `node tools/gecko-wasm/verify-profile.mjs` to check that a fresh Chrome context restores a persistent HttpOnly cookie. This test uses a synthetic HTTP site over an intercepted WebSocket. Live HTTPS navigation is covered separately by `verify-https.mjs`.
+With the development dependencies installed and the preview running, run `OUTPOST_TEST_SESSION=1 node tools/gecko-wasm/verify-profile.mjs` to check that a fresh Chrome context restores persistent and session-only HttpOnly cookies through the real encrypted export/import. This test uses a synthetic HTTP site over an intercepted WebSocket. The separate `verify-session-save-error.mjs` and `verify-session-restore-error.mjs` exercise failure handling. Live HTTPS navigation is covered separately by `verify-https.mjs` and remains dependent on a working relay and valid certificate chain.
 
 ## Linux tools
 

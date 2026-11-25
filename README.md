@@ -6,13 +6,17 @@
 
 A browser that runs inside your browser, with encrypted profiles you can export, clear, and reopen on another device.
 
-[**Open the live demo**](https://aagneyvk.github.io/outpost/) · [Run locally](#run-locally) · [Architecture](#architecture) · [MIT License](LICENSE)
+[**Download for Windows**](https://github.com/AagneyVk/outpost/releases/tag/windows-v0.1.0) · [**Open the web app**](https://aagneyvk.github.io/outpost/) · [Run locally](#run-locally) · [MIT License](LICENSE)
 
 </div>
 
 ## What OUTPOST does
 
 OUTPOST runs a WebAssembly build of Gecko in a browser tab. You can browse in a separate profile, export your open tabs and website sessions with a passphrase, clear the local Gecko profile, and import the archive in a fresh browser. The demo requires no OUTPOST account or installation.
+
+**On Windows x64**, download and double-click `OUTPOST-Windows-x64.exe`. It opens the browser and connects to websites through a helper on your PC. No hosted relay or separate Node.js installation is needed. The download is unsigned, and managed devices may block local executables. If HTTPS inspection causes a certificate error, OUTPOST offers compatibility options for an administrator-approved configuration. See the [Windows release guide](tools/gecko-wasm/WINDOWS-RELEASE.md).
+
+**On phones or when you cannot run the Windows launcher**, open the web app. It uses a user-selected Wisp relay, with the public demo relay preselected. Mobile browser compatibility and the public relay's availability have not been verified across devices.
 
 | Feature | GitHub Pages | Local checkout |
 | --- | --- | --- |
