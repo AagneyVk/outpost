@@ -1,13 +1,16 @@
 // TCP transport only. Guest TLS/SSH and all workstation execution stay client-side.
 import {WebSocketServer,WebSocket} from 'ws';
 import net from 'node:net';
+import tls from 'node:tls';
 import {lookup} from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
 export function publicAddress(address){
  try{const ip=ipaddr.process(address);return ip.range()==='unicast';}catch{return false;}
 }
-async function connectSocks(port, target, destinationPort) {
- const socket=net.connect({host:'127.0.0.1',port});
+async function connectSocks(port, target, destinationPort, encryptedExit) {
+ const socket=encryptedExit
+  ? tls.connect({...encryptedExit,rejectUnauthorized:true})
+  : net.connect({host:'127.0.0.1',port});
  // Keep errors handled during the handshake and until the caller attaches its listeners.
  socket.on('error',()=>socket.destroy());
  socket.setTimeout(15000,()=>socket.destroy());
@@ -21,6 +24,10 @@ async function connectSocks(port, target, destinationPort) {
   });
  }
  try{
+  if(encryptedExit) await new Promise((resolve,reject)=>{
+   socket.once('secureConnect',resolve);
+   socket.once('close',()=>reject(Error('Encrypted exit handshake failed')));
+  });
   socket.write(Buffer.from([5,1,0]));
   const greeting=await read(2);
   if(greeting[0]!==5||greeting[1]!==0)throw Error('SOCKS authentication rejected');
@@ -39,12 +46,12 @@ async function connectSocks(port, target, destinationPort) {
   return socket;
  }catch(error){socket.destroy();throw error;}
 }
-export function attachRelay(server,{origin='http://127.0.0.1:3001',localOrigin,path='/network/',socksPort,publicPreview=false}={}){
+export function attachRelay(server,{origin='http://127.0.0.1:3001',localOrigin,path='/network/',socksPort,encryptedExit,publicPreview=false,webOnly=false,allowedHosts}={}){
  const wss=new WebSocketServer({noServer:true,maxPayload:65536,perMessageDeflate:false});
  const clients=new Map();
  server.on('upgrade',(req,socket,head)=>{
   const allowedOrigin=req.headers.origin===origin||(localOrigin&&req.headers.origin===localOrigin);
-  if(req.url!==path||!allowedOrigin||wss.clients.size>=16){socket.destroy();return;}
+  if(req.url!==path||!allowedOrigin||(allowedHosts&&!allowedHosts.has(req.headers.host))||wss.clients.size>=16){socket.destroy();return;}
   wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
  });
  wss.on('connection',(ws,req)=>{
@@ -71,7 +78,7 @@ export function attachRelay(server,{origin='http://127.0.0.1:3001',localOrigin,p
      if(raw.length<9||raw.length>261||!id||streams.has(id)||streams.size>=32||raw[5]!==1)throw Error();
      const port=raw.readUInt16LE(6),host=raw.subarray(8).toString('utf8');
      const stream={socket:null,pending:[],bytes:0};streams.set(id,stream);
-     if(!(port===80||port===443||(!publicPreview&&port===22))||!/^[-a-zA-Z0-9.:]+$/.test(host)){end(id,4);return;}
+     if(!(port===80||port===443||(!publicPreview&&!webOnly&&port===22))||!/^[-a-zA-Z0-9.:]+$/.test(host)){end(id,4);return;}
      const records=net.isIP(host)?[{address:host,family:net.isIP(host)}]:await lookup(host,{all:true,verbatim:true});
      if(!records.length||records.some(r=>!publicAddress(r.address))){end(id,4);return;}
      if(closed||streams.get(id)!==stream)return;
@@ -79,7 +86,7 @@ export function attachRelay(server,{origin='http://127.0.0.1:3001',localOrigin,p
      const target=records.find(r=>r.family===4)||records[0];
      let socket;
      try{
-      socket=socksPort?await connectSocks(socksPort,target.address,port):net.connect({host:target.address,family:target.family,port,noDelay:true});
+      socket=socksPort||encryptedExit?await connectSocks(socksPort,target.address,port,encryptedExit):net.connect({host:target.address,family:target.family,port,noDelay:true});
      }catch{end(id);return;}
      if(closed||streams.get(id)!==stream){socket.destroy();return;}
      stream.socket=socket;

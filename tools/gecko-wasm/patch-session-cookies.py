@@ -13,11 +13,24 @@ anchor = '// A single windowless browser / chrome AppWindow'
 if text.count(anchor) != 1 or 'static bool OutpostSessionSave()' in text:
     raise SystemExit('Unexpected or already-patched embedder')
 helper = (Path(__file__).parent / 'session-cookie-snapshot.cpp').read_text(encoding='utf-8')
-text = text.replace(anchor, helper + '\n' + anchor, 1)
+text = text.replace(anchor, helper + '\n#include "nsIX509CertDB.h"\n#include "nsIX509Cert.h"\n#include "nsServiceManagerUtils.h"\n' + anchor, 1)
 anchor = '  // The host exposes only a bounded numeric operation for windowless zoom.\n'
 if text.count(anchor) != 1:
     raise SystemExit('Could not locate the privileged command handler')
-commands = '''  if (aScript.EqualsLiteral("outpost:session-cookie-capability")) {
+commands = '''  if (StringBeginsWith(aScript, "outpost:inspection-ca:"_ns)) {
+    nsAutoCString encoded(Substring(aScript, sizeof("outpost:inspection-ca:") - 1));
+    nsCOMPtr<nsIX509CertDB> db = do_GetService("@mozilla.org/security/x509certdb;1");
+    nsCOMPtr<nsIX509Cert> cert;
+    uint32_t type = 0;
+    bool ok = db && encoded.Length() <= 32768 &&
+              NS_SUCCEEDED(db->ConstructX509FromBase64(encoded, getter_AddRefs(cert))) &&
+              cert && NS_SUCCEEDED(cert->GetCertType(&type)) &&
+              type == nsIX509Cert::CA_CERT &&
+              NS_SUCCEEDED(db->AddCertFromBase64(encoded, "C,,"_ns, getter_AddRefs(cert)));
+    if (aOutResult) *aOutResult = strdup(ok ? "ok" : "error");
+    return true;
+  }
+  if (aScript.EqualsLiteral("outpost:session-cookie-capability")) {
     if (aOutResult) *aOutResult = strdup("outpost-session-cookies-v1");
     return true;
   }

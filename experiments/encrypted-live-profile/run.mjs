@@ -60,7 +60,7 @@ try {
   const profileImport = "import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName, readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory, hasSessionCookieSnapshot, clearSessionCookieSnapshot } from './profile.mjs';";
   replaceOnce(profileImport, "import { clearBrowserProfiles, exportProfile, importProfile, profileLock, profileName } from './profile.mjs';\nconst { readBrowserSession, writeBrowserSession, readBrowserHistory, writeBrowserHistory, hasSessionCookieSnapshot, clearSessionCookieSnapshot } = encryptedAppProfile(() => window.__liveTestHandle?.live);");
   replaceOnce('    gecko = new Gecko({', `    const testHandle = await ${block ? 'openLockedBlockTestProfile' : chunked ? 'openLockedChunkedTestProfile' : 'openLockedTestProfile'}(${JSON.stringify(dbName)}, ${JSON.stringify(password)});\n    window.__liveTestHandle = testHandle;\n    gecko = new Gecko({`);
-  replaceOnce('      profile: profileName(),', '      profile: testHandle.live,');
+  replaceOnce('      profile: inspectionProfile ?? profileName(),', '      profile: testHandle.live,');
   replaceOnce('    await gecko.init();', '    await gecko.init();\n    window.__liveTestGecko = gecko;');
   await fs.writeFile(file, script);
 

@@ -6,6 +6,10 @@ import { isCertificateError } from './certificate-errors.mjs';
 
 const start = document.querySelector('#start');
 const startError = document.querySelector('#start-error');
+const directLaunch = location.hostname === '127.0.0.1' &&
+  new URLSearchParams(location.search).get('launch') === 'direct';
+const inspectionMode = directLaunch && new URLSearchParams(location.search).get('inspection') === '1';
+let configuredInspection;
 const status = document.querySelector('#status');
 const resumingAfterRelay = location.hash === '#relay-restart';
 const relayRestartKey = 'outpost-relay-restart-url';
@@ -34,11 +38,13 @@ const viewport = document.querySelector('#viewport');
 const scene = document.querySelector('#browser-scene');
 const sceneAddress = document.querySelector('#scene-address');
 const sceneView = document.querySelector('#scene-view');
+const sceneInspection = document.querySelector('#scene-inspection');
 function showScene(title, detail, editable = false, canView = false) {
   document.querySelector('#scene-title').textContent = title;
   document.querySelector('#scene-detail').textContent = detail;
   sceneAddress.hidden = !editable;
   sceneView.hidden = !canView;
+  sceneInspection.hidden = true;
   scene.hidden = false;
 }
 sceneAddress.addEventListener('click', () => { address.focus(); address.select(); });
@@ -76,6 +82,7 @@ let historyWrite = Promise.resolve();
 const clearHistory = document.querySelector('#clear-history');
 
 function recordVisit(url) {
+  if (inspectionMode) return;
   visits.push(url);
   historyWrite = historyWrite.then(() => writeBrowserHistory(url)).catch(error => {
     status.textContent = 'History could not be saved. ' + error.message;
@@ -121,6 +128,7 @@ let sessionWrite = Promise.resolve();
 let sessionWriteError;
 
 function saveTabs() {
+  if (inspectionMode) return;
   const session = {
     tabs: tabs.map(tab => {
       const start = Math.max(0, tab.position - 49);
@@ -323,6 +331,10 @@ restartRelay.onclick = async () => {
   }
 };
 exitBrowser.onclick = async () => {
+  if (inspectionMode) {
+    location.replace(location.pathname + '?launch=direct');
+    return;
+  }
   exitBrowser.disabled = true;
   restartRelay.disabled = true;
   status.textContent = 'Saving your browser session…';
@@ -411,14 +423,17 @@ document.querySelector('#fullscreen').addEventListener('click', async () => {
   }
 });
 
-function finishNavigation(message) {
+function finishNavigation(message, certificateFailure = false) {
   clearTimeout(navigation.timer);
   navigation = undefined;
   status.textContent = message;
   releaseFrame();
   pageVisible = message.startsWith('Loaded ');
   if (pageVisible) scene.hidden = true;
-  else showScene('Page load unconfirmed', message, true, true);
+  else if (certificateFailure) {
+    showScene('HTTPS certificate could not be verified', message, true);
+    sceneInspection.hidden = !directLaunch || inspectionMode;
+  } else showScene('Page load unconfirmed', message, true, true);
   updateControls();
 }
 
@@ -472,7 +487,10 @@ function reportEngineMessage(message) {
     saveTabs();
     finishNavigation('Loaded ' + host);
   } else if (isCertificateError(result[2])) {
-    finishNavigation('Gecko could not verify the HTTPS certificate for ' + host + '.');
+    const hint = directLaunch
+      ? ' Antivirus or workplace HTTPS inspection can cause this. If it also happens on other sites, ask your device administrator.'
+      : '';
+    finishNavigation('Gecko could not verify the HTTPS certificate for ' + host + '.' + hint, true);
   } else {
     finishNavigation('Could not load ' + host + ' (' + result[2] + ').');
   }
@@ -543,6 +561,30 @@ start.addEventListener('click', async () => {
   showScene('Starting OUTPOST', 'Loading the browser engine on this device.');
   let releaseProfile;
   try {
+    let inspectionProfile, inspectionCertificate, preparedInspectionTrust = false;
+    if (inspectionMode) {
+      let digest;
+      const file = document.querySelector('#inspection-ca').files[0];
+      const useConfigured = configuredInspection && !file;
+      if (useConfigured) digest = configuredInspection.fingerprint;
+      else {
+        if (!file || file.size > 34000) throw Error('Approve the configured authority or choose a single approved PEM certificate authority.');
+        const pem = /^-----BEGIN CERTIFICATE-----\s+([A-Za-z0-9+/=\r\n]+)\s+-----END CERTIFICATE-----$/.exec((await file.text()).trim());
+        if (!pem) throw Error('Choose a single approved PEM certificate authority.');
+        inspectionCertificate = pem[1].replace(/[\r\n]/g, '');
+        const der = Uint8Array.from(atob(inspectionCertificate), c => c.charCodeAt(0));
+        digest = new Uint8Array(await crypto.subtle.digest('SHA-256', der)).toHex();
+      }
+      const { MemoryProfile } = await import('./inspection-memory.mjs');
+      inspectionProfile = new MemoryProfile();
+      const prepared = await fetch('./inspection-cert-db?sha256=' + digest, {cache:'no-store'});
+      if (prepared.ok) {
+        const database = new Uint8Array(await prepared.arrayBuffer());
+        if (!database.length || database.length > 1024 * 1024) throw Error('Invalid prepared certificate database.');
+        await inspectionProfile.writeFile('cert9.db', database);
+        preparedInspectionTrust = true;
+      } else if (useConfigured || prepared.status !== 404) throw Error('Could not load the approved certificate database.');
+    }
     const acquired = await new Promise((resolve, reject) => {
       navigator.locks.request(profileLock, { ifAvailable: true }, lock => {
         resolve(Boolean(lock));
@@ -566,20 +608,23 @@ start.addEventListener('click', async () => {
       print: reportEngineMessage,
       printErr: reportEngineMessage,
       wasm: { url: new URL('./engine/gecko-input-v7.wasm.zst', import.meta.url).href, compressed: true },
-      profile: profileName(),
+      profile: inspectionProfile ?? profileName(),
       env: { GECKO_NOWASMJIT: '1' },
     });
     optimizeWheelQueue(gecko, canvas);
     await gecko.init();
+    if (inspectionMode && !preparedInspectionTrust && await gecko.evalChrome('outpost:inspection-ca:' + inspectionCertificate) !== 'ok') {
+      throw Error('This Gecko build could not enable inspection compatibility. The certificate was not accepted for browsing.');
+    }
     watchEngine(gecko, { show: () => { recovery.hidden = false; }, hide: () => { recovery.hidden = true; } });
     sessionCookieCapability = await gecko.evalChrome('outpost:session-cookie-capability') === 'outpost-session-cookies-v1';
-    if (await hasSessionCookieSnapshot()) {
+    if (!inspectionMode && await hasSessionCookieSnapshot()) {
       if (!sessionCookieCapability || await gecko.evalChrome('outpost:session-cookie-restore') !== 'ok')
         throw Error('Could not restore session logins. Your saved profile has not been removed.');
       await clearSessionCookieSnapshot();
     }
-    await restoreTabs().catch(() => console.warn('Could not restore tabs.'));
-    const savedHistory = await readBrowserHistory().catch(() => {
+    if (!inspectionMode) await restoreTabs().catch(() => console.warn('Could not restore tabs.'));
+    const savedHistory = inspectionMode ? [] : await readBrowserHistory().catch(() => {
       console.warn('Could not read history.');
       return [];
     });
@@ -589,7 +634,7 @@ start.addEventListener('click', async () => {
         if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) visits.push(url);
       } catch {}
     }
-    clearHistory.disabled = false;
+    clearHistory.disabled = inspectionMode;
     // This engine paints native page zoom at device resolution. Delay setting
     // the scale until a document exists, including for restored sessions.
     nativeZoom = true;
@@ -632,6 +677,7 @@ start.addEventListener('click', async () => {
     showScene('Ready to browse', 'Search Google or enter a website address.', true);
     address.disabled = false;
     exitBrowser.disabled = false;
+    if (inspectionMode) exitBrowser.textContent = 'End temporary session';
     document.querySelector('#tab-strip').hidden = false;
     updateControls();
     zoomOut.disabled = zoom === 50;
@@ -668,4 +714,34 @@ else if (resumingAfterRelay) {
   startError.hidden = false;
   status.textContent = startError.textContent;
   document.querySelector('#relay-url').closest('details').open = true;
+} else if (directLaunch) {
+  const relayField = document.querySelector('#relay-url');
+  relayField.value = '';
+  relayField.closest('details').hidden = true;
+  if (inspectionMode) {
+    document.querySelector('#inspection-options').hidden = false;
+    document.querySelector('#profile-options').hidden = true;
+    document.querySelector('#restart-relay').hidden = true;
+    start.textContent = 'Start and allow HTTPS inspection';
+    const input = document.querySelector('#inspection-ca');
+    const refreshLabel = () => {
+      start.textContent = configuredInspection && !input.files.length
+        ? 'Allow ' + configuredInspection.name + ' and start'
+        : 'Start and allow HTTPS inspection';
+    };
+    input.addEventListener('change', refreshLabel);
+    fetch('./inspection-authority', {cache:'no-store'}).then(async response => {
+      if (!response.ok) return;
+      const authority = await response.json();
+      if (typeof authority.subject !== 'string' || !/^[0-9a-f]{64}$/.test(authority.fingerprint)) return;
+      const name = authority.subject.split('\n').find(entry => entry.startsWith('CN='))?.slice(3) ?? authority.subject;
+      configuredInspection = {...authority, name};
+      const description = document.querySelector('#configured-inspection-authority');
+      description.textContent = name + ' can inspect HTTPS traffic in this temporary session.';
+      description.hidden = false;
+      document.querySelector('#inspection-setup-help').hidden = true;
+      document.querySelector('#inspection-file-options').open = false;
+      refreshLabel();
+    }).catch(() => {});
+  } else start.click();
 }

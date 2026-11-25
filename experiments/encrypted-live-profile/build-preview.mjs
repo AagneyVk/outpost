@@ -71,7 +71,7 @@ start = replaceOnce(start, '    gecko = new Gecko({', `    try {
       });
     } finally { clearLivePassphrases(); }
     gecko = new Gecko({`, 'encrypted startup');
-start = replaceOnce(start, '      profile: profileName(),', '      profile: encryptedHandle.live,', 'profile mount');
+start = replaceOnce(start, '      profile: inspectionProfile ?? profileName(),', '      profile: encryptedHandle.live,', 'profile mount');
 start = replaceOnce(start, "status.textContent = 'OUTPOST browser profiles cleared from this address.';", "status.textContent = 'Encrypted profile cleared from this extension. Other profiles and files are separate.';", 'encrypted clear status');
 start = replaceOnce(start, "  } catch (error) {\n    console.error('OUTPOST could not start the browser.');", "  } catch (error) {\n    clearLivePassphrases();\n    if (encryptedHandle) { await encryptedHandle.close().catch(() => {}); encryptedHandle = undefined; }\n    console.error('OUTPOST could not start the browser.');", 'startup failure cleanup');
 start = replaceOnce(start, 'if (resumingAfterRelay && relaySettingsRestored) start.click();', "if (resumingAfterRelay && relaySettingsRestored) { status.textContent = 'Enter your live profile passphrase to restart.'; liveMode.value = 'open'; livePassInput.focus(); }", 'encrypted relay restart');

@@ -28,7 +28,7 @@ try {
   }
   script = "import { MemoryProfile } from './memory-profile.mjs';\nimport { unsealMemoryProfile } from './archive.mjs';\n" + script;
   replaceOnce('    gecko = new Gecko({', "    const testMemoryProfile = window.__testArchive ? await unsealMemoryProfile(new Blob([window.__testArchive]), (await import('/portable.js')).unseal, 'synthetic longer passphrase', 'a'.repeat(64)) : new MemoryProfile();\n    window.__testMemoryProfile = testMemoryProfile;\n    gecko = new Gecko({");
-  replaceOnce('      profile: profileName(),', '      profile: testMemoryProfile,');
+  replaceOnce('      profile: inspectionProfile ?? profileName(),', '      profile: testMemoryProfile,');
   replaceOnce('    await gecko.init();', '    await gecko.init();\n    window.__testGecko = gecko;');
   replaceOnce("    if (await hasSessionCookieSnapshot()) {", "    if (await testMemoryProfile.stat('outpost-session-cookies.dat')) {\n      if (await gecko.evalChrome('outpost:session-cookie-restore') !== 'ok') throw Error('Test snapshot restore failed');\n      await testMemoryProfile.unlink('outpost-session-cookies.dat');\n    }\n    if (await hasSessionCookieSnapshot()) {");
   await fs.writeFile(start, script);

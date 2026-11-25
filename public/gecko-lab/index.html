@@ -47,6 +47,17 @@
     <p>Gecko runs inside this tab. Start the browser, then search Google or enter a website address.</p>
     <button id="start" class="primary" type="button">Start browser</button>
     <p id="start-error" role="alert" hidden></p>
+    <fieldset id="inspection-options" hidden>
+      <legend>HTTPS inspection compatibility</legend>
+      <p id="configured-inspection-authority" hidden></p>
+      <p id="inspection-setup-help">If your device administrator provided an approved certificate, you can select it here. Only allow a certificate you trust.</p>
+      <details id="inspection-file-options" open>
+        <summary>Choose a certificate file</summary>
+        <label for="inspection-ca">Approved certificate authority (.pem)</label>
+        <input id="inspection-ca" type="file" accept=".pem,.crt">
+      </details>
+      <a href="?launch=direct">Keep strict HTTPS</a>
+    </fieldset>
     <details>
       <summary>Network settings</summary>
       <label for="relay-url">Custom Wisp endpoint</label>
@@ -89,6 +100,10 @@
         <p id="scene-detail"></p>
         <button id="scene-address" type="button" hidden>Edit address</button>
         <button id="scene-view" type="button" hidden>Show page</button>
+        <div id="scene-inspection" hidden>
+          <p>Security software may be checking this connection. In compatibility mode it can read inspected HTTPS traffic.</p>
+          <a id="inspection-mode-link" href="?launch=direct&amp;inspection=1">Review HTTPS inspection options</a>
+        </div>
       </div>
     </div>
   </section>

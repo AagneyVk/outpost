@@ -27,3 +27,6 @@ experiments/extension-gecko-demo/gecko-fixture-restore-profile-*/
 experiments/extension-certificate-probe/temporary-profile-*/
 experiments/extension-public-login-probe/temporary-profile-*/
 pages-dist/
+/outpost-exit.json
+/local-inspection/
+/OUTPOST.exe

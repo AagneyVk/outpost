@@ -25,6 +25,19 @@ The engine applies `patch-native-zoom.py`, `patch-input-latency.py`, `patch-trac
 
 The v7 host bundle reuses the reviewed v6 UI and input code with the new build's generated glue and GRE data. Assemble it with `node tools/gecko-wasm/assemble-session-engine.mjs <gecko.js/wasm> <output-js>` and use the matching `gecko.wasm.zst`; the current WASM is recompressed with zstd level 12. The saved isolated build used the pinned toolchain, `GECKO_RELEASE=1`, and `NO_WASM_OPT=1`. A fresh source build still requires reproducing that environment. Keep previous assets available for compatibility checks. Native zoom is applied after a page exists, including when restoring a saved session.
 
+The Windows launcher shows **HTTPS inspection options** after a certificate error. Select a single administrator-provided PEM CA and confirm by starting the temporary session. This allows the device's inspector to read intercepted HTTPS. The Gecko profile lives in memory and its trust database is excluded from exports. **End temporary session** returns to strict mode.
+
+For v7, prepare a fresh NSS database containing only the approved CA in an isolated directory. Use Mozilla NSS `certutil` (the Windows system program of the same name does not support these commands):
+
+```sh
+mkdir empty-nss
+certutil -N -d sql:empty-nss --empty-password
+certutil -A -d sql:empty-nss -n "Approved HTTPS inspection CA" -t "C,," -i approved-ca.der
+certutil -L -d sql:empty-nss
+```
+
+Place `cert9.db` and the matching `approved-ca.der` in the checkout's ignored `local-inspection` directory. Use files generated and reviewed by the administrator. Selecting the PEM representation of that same certificate loads the prepared database into the temporary profile. The database and authority are device configuration and should never be distributed in a portable workspace. The newer source also contains an experimental import command for use without a prepared database once a rebuilt engine is available. Verify wrong hostname, expiry, and rejection of unapproved certificates before distribution.
+
 With the app running locally, `node tools/gecko-wasm/measure-input-burst.mjs` measures a synthetic trusted typing burst through its final visible result; add `--baseline` to run the same check with v5. This does not establish latency on every website or input device.
 
 To compare an experimental build without changing the running application, start `node tools/gecko-wasm/test-engine-server.mjs /path/to/gecko.js/dist` and run the checks against `http://127.0.0.1:3002/`. `OUTPOST_BENCH_URL=http://127.0.0.1:3002/ node tools/gecko-wasm/input-benchmark.mjs --wheel` measures a synthetic 80-event scroll burst and a following key; the page verifies the complete scroll delta and the key. `node tools/gecko-wasm/measure-scroll-display.mjs` measures how far a synthetic scroll gesture is ahead of a marker painted by Gecko; add `--baseline` to compare the previous bitmap-scaled release. Set `OUTPOST_MEASURE_ZOOM=150` to measure at 150% zoom. These tests do not predict latency on all sites or devices. Also run `verify-interaction.mjs`, `verify-zoom.mjs`, `verify-redirect.mjs`, `verify-profile.mjs`, and `verify-https.mjs` against the test server before replacing release assets.
